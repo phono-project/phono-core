@@ -1,0 +1,9 @@
+.vscode
+.pixi
+results
+vcpkg_installed
+third_party
+build
+pixi.lock
+cache
+pixi.lock

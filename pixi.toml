@@ -1,0 +1,26 @@
+[workspace]
+name = "phono-core-env"
+version = "0.1.0"
+description = "phono core compile environment"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+python = ">=3.13,<3.14"
+ninja = "*"
+cmake = "*"
+pip = "*"
+
+[pypi-dependencies]
+torch = "*"
+executorch = "*"
+
+[tasks]
+setup = "test -d third_party/executorch/.git || git clone --recursive --depth 1 https://github.com/pytorch/executorch third_party/executorch"
+format = "black . && isort ."
+lint = "flake8 . && mypy ."
+config = "cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Release"
+build = "cmake --build build"
+
+[environments]
+default = { features = [], solve-group = "default" }
