@@ -15,7 +15,19 @@
 #include <string>
 #include <vector>
 
-#include <unistd.h>
+// On Windows, use _read() instead of read().
+#ifdef _WIN32
+  #include <io.h>
+  #ifndef STDIN_FILENO
+    #define STDIN_FILENO 0
+  #endif
+  #ifndef ssize_t
+    typedef intptr_t ssize_t;
+  #endif
+  #define read _read
+#else
+  #include <unistd.h>
+#endif
 
 #include "core/utf8_util.hpp"
 #include "engine/inference_engine.hpp"

@@ -8,6 +8,9 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
+# Set MSVC runtime library to MT to avoid DLL dependencies on Windows.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 option(PHONO_USE_INSTALLED_EXECUTORCH
        "Use a pre-built+installed ExecuTorch via find_package() instead of add_subdirectory()" OFF)
 
@@ -35,6 +38,56 @@ else()
       "  -DPHONO_USE_INSTALLED_EXECUTORCH=ON -DCMAKE_PREFIX_PATH=<install prefix>\n"
       "See README.md for full instructions.")
   endif()
+
+  # Prevent windows.h macro pollution (min/max) on Windows MSVC
+  if(WIN32)
+    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
+  endif()
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # Pre-build host 'flatc' tool during CMake configure time if not found.
+  # This avoids target name collisions and version mismatches (especially on Windows).
+  # ═══════════════════════════════════════════════════════════════════════
+  find_program(FLATC_EXECUTABLE flatc)
+
+  if(NOT FLATC_EXECUTABLE)
+    set(FLATBUFFERS_SRC_DIR "${EXECUTORCH_SOURCE_DIR}/third-party/flatbuffers")
+    set(FLATBUFFERS_BUILD_DIR "${CMAKE_BINARY_DIR}/host_flatc_build")
+
+    if(WIN32)
+      set(FLATC_BIN_PATH "${FLATBUFFERS_BUILD_DIR}/Release/flatc.exe")
+      if(NOT EXISTS "${FLATC_BIN_PATH}")
+        set(FLATC_BIN_PATH "${FLATBUFFERS_BUILD_DIR}/flatc.exe")
+      endif()
+    else()
+      set(FLATC_BIN_PATH "${FLATBUFFERS_BUILD_DIR}/flatc")
+    endif()
+
+    if(NOT EXISTS "${FLATC_BIN_PATH}")
+      message(STATUS "Pre-building host flatc compiler from ExecuTorch third-party/flatbuffers...")
+      
+      execute_process(
+        COMMAND ${CMAKE_COMMAND} -S "${FLATBUFFERS_SRC_DIR}" -B "${FLATBUFFERS_BUILD_DIR}"
+                -DFLATBUFFERS_BUILD_FLATC=ON
+                -DFLATBUFFERS_BUILD_TESTS=OFF
+                -DCMAKE_BUILD_TYPE=Release
+        RESULT_VARIABLE CMAKE_FLATC_CONFIG_RES
+      )
+      
+      execute_process(
+        COMMAND ${CMAKE_COMMAND} --build "${FLATBUFFERS_BUILD_DIR}" --config Release --target flatc
+        RESULT_VARIABLE CMAKE_FLATC_BUILD_RES
+      )
+
+      if(NOT CMAKE_FLATC_BUILD_RES EQUAL 0)
+        message(FATAL_ERROR "Failed to pre-build host flatc executable!")
+      endif()
+    endif()
+
+    set(FLATC_EXECUTABLE "${FLATC_BIN_PATH}" CACHE FILEPATH "Path to flatc compiler" FORCE)
+  endif()
+
+  message(STATUS "Using FLATC_EXECUTABLE: ${FLATC_EXECUTABLE}")
 
   set(EXECUTORCH_BUILD_EXTENSION_MODULE ON CACHE BOOL "" FORCE)
   set(EXECUTORCH_BUILD_EXTENSION_TENSOR ON CACHE BOOL "" FORCE)
