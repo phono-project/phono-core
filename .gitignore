@@ -2,6 +2,7 @@
 .pixi
 results
 vcpkg_installed
+triplets
 third_party
 build
 pixi.lock
