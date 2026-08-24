@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "core/config.hpp"
+#include "core/text_normalizer.hpp"
 #include "core/utf8_util.hpp"
 
 namespace phono::core {
@@ -102,7 +103,8 @@ int32_t Tokenizer::special_token_id(const std::string& name) const {
 
 std::vector<int32_t> Tokenizer::encode_context(const std::string& text_utf8) const {
     std::vector<int32_t> ids;
-    for (const auto& ch : utf8_split_chars(text_utf8)) {
+    const std::string normalized = normalize_text_utf8(text_utf8);
+    for (const auto& ch : utf8_split_chars(normalized)) {
         auto it = context_vocab_.find(ch);
         if (it != context_vocab_.end()) {
             ids.push_back(it->second);
@@ -171,6 +173,15 @@ std::string Tokenizer::ids_to_text(const std::vector<int32_t>& ids) const {
 std::string Tokenizer::id_to_chinese(int32_t id) const {
     auto it = id_to_chinese_.find(id);
     return it != id_to_chinese_.end() ? it->second : std::string();
+}
+
+int32_t Tokenizer::chinese_id_to_context_id(int32_t id) const {
+    const std::string chinese = id_to_chinese(id);
+    if (chinese.empty()) {
+        return -1;
+    }
+    auto it = context_vocab_.find(chinese);
+    return it != context_vocab_.end() ? it->second : -1;
 }
 
 }  // namespace phono::core

@@ -1,0 +1,6 @@
+{
+  "beam_size": 3,
+  "N": 8,
+  "T": 8,
+  "max_context_length": 127
+}

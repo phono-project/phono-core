@@ -23,10 +23,10 @@ The code is organized into four subdirectories — src/core, src/algo, src/conte
   - viterbi — 词典约束的 Viterbi N-best 束搜索解码
 - src/context — 流式上下文状态，命名空间 phono::context
   - kv_cache — PersistentTensor：零拷贝的持久缓存缓冲区及其子视图
-  - context — Context / ContextManager：单个会话的 KV Cache 视图、token id 序列与游标，以及多上下文管理
+  - context — Context / ContextManager：B 路 self-KV Cache 视图、token id 序列，以及可复用上下文槽位管理
 - src/engine — 推理引擎，命名空间 phono::engine
-  - inference_engine — InferenceEngine 加载 pre / post 两个 .pte 模块，InferenceSession 提供流式预测 API
-- src/custom_ops — ExecuTorch 自定义算子，命名空间 phono::ops：update_kv_cache / update_cross_kv / update_mhsa_kv
+  - inference_engine — InferenceEngine 加载 v2 多方法 pre / post .pte 模块，InferenceSession 提供有状态 fill / generate API
+  - src/custom_ops — ExecuTorch 自定义算子，命名空间 phono::ops：update_mhsa_kv
 - apps — 可执行程序：streaming_benchmark_demo 交互式流式基准
 - third_party — ExecuTorch 源码，由 pixi 的 setup 任务拉取
 
@@ -41,10 +41,10 @@ The code is organized into four subdirectories — src/core, src/algo, src/conte
   - viterbi — dictionary-constrained Viterbi N-best beam-search decoding
 - src/context — streaming context state, namespace phono::context
   - kv_cache — PersistentTensor: zero-copy persistent cache buffers and sub-views
-  - context — Context / ContextManager: per-conversation KV-cache views, token-id sequence and cursor, plus multi-context management
+  - context — Context / ContextManager: B-wide self-KV-cache views, token-id sequences, and reusable context slots
 - src/engine — inference engine, namespace phono::engine
-  - inference_engine — InferenceEngine loads the pre/post .pte modules; InferenceSession provides the streaming prediction API
-- src/custom_ops — ExecuTorch custom operators, namespace phono::ops: update_kv_cache / update_cross_kv / update_mhsa_kv
+  - inference_engine — InferenceEngine loads the v2 multi-method pre/post .pte modules; InferenceSession provides stateful fill/generate APIs
+  - src/custom_ops — ExecuTorch custom operator, namespace phono::ops: update_mhsa_kv
 - apps — executables: streaming_benchmark_demo, an interactive streaming benchmark
 - third_party — ExecuTorch source, fetched by the pixi setup task
 
@@ -53,39 +53,45 @@ The code is organized into four subdirectories — src/core, src/algo, src/conte
 模型包是一个自包含的目录，InferenceEngine 以该目录路径构造：
 
 - config.json — 模型与运行配置，含 common、pre_model、post_model、vocabs、decoding、runtime 六节
-- bins/pre_model.pte — 前段因果编码器：编码上下文并维护 KV Cache
-- bins/post_model.pte — 后段双向解码器：读取拼音音节，交叉注意力到上下文，输出汉字分布
+- bins/pre_model.pte — v2 多方法前段解码器（`pre_model_pass1` / `pre_model_pass2`），维护 B 路 self-KV Cache
+- bins/post_model.pte — 后段拼音编码器，输出 hidden states 与 logits mask
 - vocabs/chinese_vocab.txt — 汉字词表（预测输出空间）
 - vocabs/context_vocab.txt — 上下文词表（含特殊符号，如 bos_token）
 - vocabs/pinyin_vocab.txt — 拼音音节词表（模型输入）
 - dict/dict_trie.json — 词典 Trie，供 Viterbi 解码使用
+- core_configs/default.json — ContextManager 的 beam、slack、匹配阈值与手动上下文长度配置
 
 示例使用的模型可以通过 huggingface-cli 下载：
 ```
 hf download afirelily/phonop2c_v1_0_base_model --local-dir ./phonop2c_v1_0_base_model
 ```
 
+该下载示例是旧版 v1 模型包；v2 引擎要求 pre 包含 `pre_model_pass1` 与 `pre_model_pass2` 方法，并要求 post 方法名为 `post_model`。
+
 ## Model Package
 
 A model package is a self-contained directory; InferenceEngine is constructed with its path:
 
 - config.json — model and runtime config, in six sections: common, pre_model, post_model, vocabs, decoding, runtime
-- bins/pre_model.pte — the causal pre-model: encodes the context and maintains the KV caches
-- bins/post_model.pte — the bidirectional post-model: reads pinyin syllables, cross-attends to the context, and outputs the Chinese-character distribution
+- bins/pre_model.pte — the v2 multi-method decoder (`pre_model_pass1` / `pre_model_pass2`) with a B-wide self-KV cache
+- bins/post_model.pte — the pinyin encoder, returning hidden states and a logits mask
 - vocabs/chinese_vocab.txt — the Chinese-character vocabulary (prediction output space)
 - vocabs/context_vocab.txt — the context vocabulary (including special tokens such as bos_token)
 - vocabs/pinyin_vocab.txt — the pinyin-syllable vocabulary (model input)
 - dict/dict_trie.json — the dictionary trie, used by Viterbi decoding
+- core_configs/default.json — ContextManager beam, slack, match-threshold, and manual context-length settings
 
 The sample model package can be downloaded using huggingface-cli:
 ```
 hf download afirelily/phonop2c_v1_0_base_model --local-dir ./phonop2c_v1_0_base_model
 ```
 
+The download example is a legacy v1 package. The v2 engine requires `pre_model_pass1` and `pre_model_pass2` methods in the pre program and a post method named `post_model`.
+
 
 ## 构建与运行
 
-前置要求：pixi 环境。ExecuTorch 由 pixi 任务拉取源码后随主工程一起编译：
+前置要求：pixi 环境与 vcpkg。ICU 和 nlohmann-json 由 `vcpkg.json` 管理；如果系统没有 ICU，请设置 `CMAKE_TOOLCHAIN_FILE` 指向 vcpkg toolchain。ExecuTorch 由 pixi 任务拉取源码后随主工程一起编译：
 
 - pixi run setup — 将 ExecuTorch（含子模块）克隆到 third_party/executorch，已存在时跳过
 - pixi run config — 配置 CMake 构建
@@ -95,7 +101,7 @@ hf download afirelily/phonop2c_v1_0_base_model --local-dir ./phonop2c_v1_0_base_
 
 ## Build & Run
 
-Prerequisites: the pixi environment. The pixi task fetches ExecuTorch's source and it is compiled together with this project:
+Prerequisites: the pixi environment and vcpkg. ICU and nlohmann-json are declared in `vcpkg.json`; if ICU is not installed system-wide, set `CMAKE_TOOLCHAIN_FILE` to the vcpkg toolchain. The pixi task fetches ExecuTorch's source and it is compiled together with this project:
 
 - pixi run setup — clones ExecuTorch (with submodules) into third_party/executorch; skipped if already present
 - pixi run config — configures the CMake build
@@ -110,7 +116,7 @@ At configure time, two CMake cache variables can be overridden: PHONO_USE_INSTAL
 results/streaming_benchmark_demo phonop2c_v1_0_base_model
 ```
 
-程序从 stdin 读取一行空格分隔的拼音窗口，例如 ni hao。每个窗口的处理分两步：先把自上次提交以来新增的已定稿文本增量编码进上下文（pre 模型），再对当前拼音窗口执行解码（post 模型），随后打印 Viterbi N-best 候选及得分。交互选择一个候选序号提交到上下文；当上下文触及 pre 模型的序列上限，或按 Ctrl-C 时结束，并打印基准报告，包括窗口数、提交字符数、每步 Viterbi 延迟与吞吐。
+程序从 stdin 读取一行空格分隔的拼音窗口，例如 ni hao。每个窗口通过 `InferenceSession::generate` 执行 B 路 beam search；提交候选后下一次 `fill` 只对新增的严格因果历史做增量预填充。上下文达到 hard model limit 或收到取消信号时返回状态码并结束。
 
 ## Usage
 
@@ -119,23 +125,23 @@ Run the benchmark demo after downloading the model:
 results/streaming_benchmark_demo phonop2c_v1_0_base_model
 ```
 
-The program reads one space-separated pinyin window per line from stdin, e.g. ni hao. Each window is processed in two steps: first the text committed since the last call is incrementally encoded into the context (pre model), then the current pinyin window is decoded (post model), and the Viterbi N-best candidates with scores are printed. Pick a candidate number interactively to commit it to the context; the run ends when the context reaches the pre-model sequence limit or on Ctrl-C, printing a benchmark report with window count, committed characters, per-step Viterbi latency and throughput.
+The program reads one space-separated pinyin window per line from stdin, e.g. ni hao. Each window uses `InferenceSession::generate` for B-way beam search; after a candidate is committed, the next `fill` incrementally pre-fills only the new strictly-causal history. Context and cancellation limits are returned as status codes.
 
 ## 流式推理设计
 
 InferenceSession 是无状态的：所有会话状态都保存在传入的 Context 中，因此一个 session 可以驱动多个上下文。每个 Context 持有三样东西：KV Cache 的 PersistentTensor 视图、已提交文本的 token id 序列、以及游标 current_position（即下一次写入的缓存位置）。
 
-- advance_context 只编码自上次调用以来的增量文本，经 pre 模型写入 KV Cache 的新区间，旧区间原样保留
-- ContextManager 把多个上下文的 KV Cache 堆叠为单块连续分配，每个上下文只是其中的一个视图，避免逐上下文分配与内存碎片化
-- src/custom_ops 中的三个算子把新计算的 K / V 张量写入缓存指定位置，供导出的 .pte 图直接调用
+- `fill` 在历史未改变时复用 cache；历史追加时只运行新增区间，并将 beam 0 的新 slice 复制到其他 beam。
+- `generate` 只读取严格因果历史和当前生成的临时 cross-attention cache；生成期间不改变 `history_seqlen`。
+- ContextManager 用 JSON 配置 B、slack `N`、匹配阈值 `T` 与 `max_context_length`，支持前缀复用、BOS 保护的左移窗口复用和直接重算。
 
 ## Streaming Inference Design
 
 InferenceSession is stateless: all per-conversation state lives in the Context passed in, so one session can drive many contexts. Each Context holds three things: PersistentTensor views into the KV caches, the token-id sequence of the committed text, and the cursor current_position (the cache write position for the next step).
 
-- advance_context encodes only the incremental text committed since the last call, runs it through the pre model into the new KV-cache region, and leaves older regions untouched
-- ContextManager stacks all contexts' KV caches into a few contiguous allocations; each context is just a view into them, avoiding per-context allocation and memory fragmentation
-- the three operators in src/custom_ops write freshly computed K / V tensors into the cache at the given position, and are called directly by the exported .pte graphs
+- `fill` reuses unchanged history; when history is appended it runs only the new range and copies beam zero's new slice to the other beams.
+- `generate` reads strictly-causal history plus the temporary cross-attention generation cache and never changes `history_seqlen`.
+- ContextManager takes JSON configuration for beam width, slack `N`, match threshold `T`, and `max_context_length`, supporting prefix reuse, BOS-protected left-shift reuse, and direct recalculation.
 
 ## 许可证与最终声明
 

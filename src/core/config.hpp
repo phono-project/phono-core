@@ -73,11 +73,14 @@ struct DecodingParams {
 
 // Runtime / packaging knobs.
 struct RuntimeParams {
-    int32_t batch_size = 1;                // on-device deployment is always B=1.
+    int32_t batch_size = 1;                // B in the exported cache tensors.
     std::string cache_dtype = "float32";   // dtype of KV-cache buffers;
                                            // the .pte graphs were exported/lowered with.
     std::string pre_model_path = "bins/pre_model.pte";
     std::string post_model_path = "bins/post_model.pte";
+    std::string pre_pass1_method = "pre_model_pass1";
+    std::string pre_pass2_method = "pre_model_pass2";
+    std::string post_method = "post_model";
 };
 
 // Top level configuration struct.

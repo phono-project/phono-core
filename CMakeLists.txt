@@ -1,5 +1,13 @@
 cmake_minimum_required(VERSION 3.24)
+
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND DEFINED ENV{VCPKG_ROOT})
+  set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+      CACHE FILEPATH "vcpkg toolchain file")
+endif()
+
 project(edge_phono_engine CXX)
+
+include(CTest)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -100,6 +108,8 @@ else()
   add_subdirectory(${EXECUTORCH_SOURCE_DIR} ${CMAKE_BINARY_DIR}/executorch_build)
 endif()
 
+find_package(ICU REQUIRED COMPONENTS uc i18n)
+
 # ═══════════════════════════════════════════════════════════════════════
 # phono_core: config, tokenizer, trie + Viterbi decoding, KV cache, context,
 # inference engine. Everything except src/core and src/algo is ExecuTorch-
@@ -108,6 +118,7 @@ endif()
 add_library(phono_core STATIC
     src/core/config.cpp
     src/core/tokenizer.cpp
+    src/core/text_normalizer.cpp
     src/algo/trie.cpp
     src/algo/viterbi.cpp
     src/context/kv_cache.cpp
@@ -121,6 +132,7 @@ target_include_directories(phono_core PUBLIC
   include)
 target_compile_features(phono_core PUBLIC cxx_std_20)
 target_link_libraries(phono_core PUBLIC nlohmann_json::nlohmann_json)
+target_link_libraries(phono_core PUBLIC ICU::uc ICU::i18n)
 
 # Core runtime + the two extensions we need.
 target_link_libraries(phono_core PUBLIC executorch)
@@ -171,3 +183,9 @@ add_executable(streaming_benchmark_demo apps/streaming_benchmark_demo.cpp)
 target_link_libraries(streaming_benchmark_demo PRIVATE phono_core)
 set_target_properties(streaming_benchmark_demo PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${PHONO_RUNTIME_OUTPUT_DIR}")
+
+if(BUILD_TESTING)
+  add_executable(phono_core_tests tests/core_tests.cpp)
+  target_link_libraries(phono_core_tests PRIVATE phono_core)
+  add_test(NAME phono_core_tests COMMAND phono_core_tests)
+endif()

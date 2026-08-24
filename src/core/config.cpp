@@ -108,6 +108,9 @@ ModelPackageConfig ModelPackageConfig::load(const std::string& package_root) {
         cfg.runtime.cache_dtype = get_or<std::string>(r, "cache_dtype", cfg.runtime.cache_dtype);
         cfg.runtime.pre_model_path = get_or<std::string>(r, "pre_model_path", cfg.runtime.pre_model_path);
         cfg.runtime.post_model_path = get_or<std::string>(r, "post_model_path", cfg.runtime.post_model_path);
+        cfg.runtime.pre_pass1_method = get_or<std::string>(r, "pre_pass1_method", cfg.runtime.pre_pass1_method);
+        cfg.runtime.pre_pass2_method = get_or<std::string>(r, "pre_pass2_method", cfg.runtime.pre_pass2_method);
+        cfg.runtime.post_method = get_or<std::string>(r, "post_method", cfg.runtime.post_method);
     }
 
     if (cfg.pre_model.mhsa_heads <= 0 || cfg.pre_model.attn_dim % cfg.pre_model.mhsa_heads != 0) {
@@ -118,6 +121,9 @@ ModelPackageConfig ModelPackageConfig::load(const std::string& package_root) {
     }
     if (cfg.post_model.mhca_heads <= 0 || cfg.post_model.mhca_attn_dim % cfg.post_model.mhca_heads != 0) {
         throw std::runtime_error("ModelPackageConfig::load: post_model.mhca_attn_dim not divisible by mhca_heads");
+    }
+    if (cfg.runtime.batch_size <= 0) {
+        throw std::runtime_error("ModelPackageConfig::load: runtime.batch_size must be positive");
     }
 
     return cfg;

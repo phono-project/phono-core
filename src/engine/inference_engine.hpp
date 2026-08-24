@@ -1,10 +1,9 @@
-// inference_engine.hpp
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <nlohmann/json.hpp>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -18,40 +17,47 @@
 
 namespace phono::engine {
 
-// predict_step results
-
-struct TopKStepResult {
-    std::vector<int32_t> pred_ids;   // per-position argmax id (topk==1)
-    std::string decoded;             // ids_to_text(pred_ids)
-    int32_t current_seqlen = 0;
+enum class InferenceError {
+    Ok = 0,
+    InvalidArgument,
+    ContextLimitExceeded,
+    PinyinLimitExceeded,
+    NoCandidates,
+    Cancelled,
+    ModelError,
 };
 
-struct TopNStepResult {
-    // Per post-position, top-k candidate ids/probs/logits (topk>1), plus entropy.
-    std::vector<std::vector<int32_t>> pred_ids_per_pos;
-    std::vector<std::vector<std::string>> decoded_per_pos;
-    std::vector<std::vector<float>> probs_per_pos;
-    std::vector<std::vector<float>> logits_per_pos;
-    std::vector<float> entropy_per_pos;
-    int32_t current_seqlen = 0;
-};
+const char* inference_error_name(InferenceError error);
 
-// Full per-position logits (topk==0), used internally by predict_step_viterbi
-// but also exposed for callers who want to post-process differently.
-struct FullLogitsStepResult {
-    std::vector<std::vector<float>> logits;  // [S_post][proj_size]
-    int32_t current_seqlen = 0;
-};
-
-struct NBestEntry {
+struct BeamResult {
     double score = 0.0;
-    std::vector<std::string> words;  // ordered chars / dictionary words
-    std::string text;                // words joined together
+    std::vector<int32_t> pred_ids;  // Chinese-vocabulary ids.
+    std::string decoded;
 };
 
-struct ViterbiStepResult {
-    std::vector<NBestEntry> nbest;
+struct GenerateResult {
+    InferenceError error = InferenceError::Ok;
+    std::vector<BeamResult> beams;
     int32_t current_seqlen = 0;
+    int32_t history_seqlen = 0;
+
+    bool ok() const { return error == InferenceError::Ok; }
+};
+
+struct PostModelOutput {
+    std::vector<float> hidden;
+    std::vector<uint8_t> logits_mask;
+    int32_t batch_size = 0;
+    int32_t sequence_length = 0;
+    int32_t hidden_dim = 0;
+    int32_t projection_size = 0;
+};
+
+struct DecoderModelOutput {
+    std::vector<float> logits;
+    int32_t batch_size = 0;
+    int32_t sequence_length = 0;
+    int32_t projection_size = 0;
 };
 
 class InferenceEngine {
@@ -65,71 +71,99 @@ public:
     const core::ModelPackageConfig& config() const { return config_; }
     const core::Tokenizer& tokenizer() const { return tokenizer_; }
 
-    const nlohmann::json& trie() const { return trie_; }
     void load_trie_from_json(const std::string& path) { trie_ = algo::load_trie(path); }
+    const nlohmann::json& trie() const { return trie_; }
 
-    // Runs the pre model over the *new* prefix tokens for `ctx`, writing
-    // them at the ctx's current_position cursor (which advance_context has
-    // already advanced past). Mutates ctx's KV-cache views in place.
-    void run_pre_model(const std::vector<int32_t>& new_prefix_ids, context::Context& ctx);
+    // These methods execute the v2 exported methods. They return the runtime
+    // error instead of throwing so session methods can report a stable code.
+    InferenceError run_pre_pass1(const std::vector<int32_t>& input_ids,
+                                 context::PersistentTensor& self_kv,
+                                 int32_t current_seqlen,
+                                 int32_t batch_size) const;
 
-    // Runs the post model over the pinyin `postfix_ids`, cross-attending to
-    // the ctx's KV caches up to ctx.current_position(). Returns
-    // [S_post][proj_size] logits.
-    std::vector<std::vector<float>> run_post_model(const std::vector<int32_t>& postfix_ids,
-                                                   context::Context& ctx);
+    InferenceError run_pre_pass2(const std::vector<int32_t>& input_ids,
+                                 context::PersistentTensor& self_kv,
+                                 const std::vector<int32_t>& current_seqlen,
+                                 const PostModelOutput& post,
+                                 int32_t cross_q_pos_start,
+                                 DecoderModelOutput& output) const;
+
+    InferenceError run_post_model(const std::vector<int32_t>& pinyin_ids,
+                                  PostModelOutput& output) const;
+
+    int32_t pre_pass1_batch_size() const { return pre_pass1_batch_size_; }
+    int32_t pre_pass2_batch_size() const { return pre_pass2_batch_size_; }
 
 private:
+    static InferenceError runtime_error_to_status(executorch::runtime::Error error);
+
     core::ModelPackageConfig config_;
     core::Tokenizer tokenizer_;
     std::unique_ptr<executorch::extension::Module> pre_module_;
     std::unique_ptr<executorch::extension::Module> post_module_;
     nlohmann::json trie_;
+    int32_t pre_pass1_batch_size_ = 0;
+    int32_t pre_pass2_batch_size_ = 0;
 };
 
-// Stateless streaming runner. All per-conversation state lives in the
-// `Context` passed in, so one session can drive many contexts.
 class InferenceSession {
 public:
     explicit InferenceSession(InferenceEngine& engine);
+    InferenceSession(InferenceEngine& engine, int32_t beam_size);
+    InferenceSession(InferenceEngine& engine, context::Context& context);
 
-    // Seeds BOS into `ctx`'s KV caches at position 0 and sets its
-    // current_position to 1. Call once per fresh Context (advance_context
-    // does this automatically when the context is still empty).
-    void initialize_context(context::Context& ctx);
+    // Allocates no per-call cache. The model-configured B dimension is used as
+    // the beam/batch width for the session.
+    InferenceError initialize();
+    InferenceError reset();
 
-    // Advances `ctx` by appending the NEW context text `new_text` — i.e. the
-    // characters committed since the last call, not the full accumulated
-    // context. Only those new tokens are encoded and run through the pre
-    // model; the KV caches carry everything already fed. The new tokenizer
-    // ids are also recorded in the context. Treating the input as strictly
-    // new text keeps this composable with higher-level management (e.g.
-    // truncating the head of the context to slide the window).
-    void advance_context(context::Context& ctx, const std::string& new_text);
+    // Appends newly committed context-vocabulary ids using the strictly
+    // causal pass. A leading BOS is accepted and ignored.
+    InferenceError fill(const std::vector<int32_t>& new_ids);
 
-    // greedy per-position Chinese-character prediction from `pinyin_list`, given the text
-    // committed since the last call (`new_text`), which is appended to the Context before decoding.
-    TopKStepResult predict_step(context::Context& ctx, const std::string& new_text,
-                                const std::vector<std::string>& pinyin_list);
+    // Replaces the full context snapshot. Common prefixes are retained and
+    // only the missing suffix is filled; divergent input is rebuilt from BOS.
+    InferenceError replace_context(const std::vector<int32_t>& context_ids);
 
-    // top-k candidates per position plus entropy.
-    TopNStepResult predict_step_topn(context::Context& ctx, const std::string& new_text,
-                                     const std::vector<std::string>& pinyin_list, int topk);
+    // Runs autoregressive beam search over pinyin-vocabulary ids. context_ids
+    // may be supplied as the full current context; an empty vector uses the
+    // context already filled into this session. The history cache is never
+    // advanced by generation.
+    GenerateResult generate(const std::vector<int32_t>& pinyin_ids,
+                            const std::vector<int32_t>& context_ids = {},
+                            const std::atomic_bool* cancellation = nullptr);
+    GenerateResult generate(const std::vector<int32_t>& pinyin_ids,
+                            const std::vector<int32_t>& context_ids,
+                            const std::atomic_bool& cancellation) {
+        return generate(pinyin_ids, context_ids, &cancellation);
+    }
 
-    // full per-position logits.
-    FullLogitsStepResult predict_step_full_logits(context::Context& ctx, const std::string& new_text,
-                                                  const std::vector<std::string>& pinyin_list);
-
-    // full logits -> softmax -> epsilon-filtered per-position candidates ->
-    // trie word matching -> Viterbi N-best dictionary-constrained decoding.
-    ViterbiStepResult predict_step_viterbi(context::Context& ctx, const std::string& new_text,
-                                           const std::vector<std::string>& pinyin_list,
-                                           double beta_single, double beta_word, double epsilon,
-                                           int n_best);
+    int32_t current_seqlen() const { return current_seqlen_; }
+    int32_t history_seqlen() const { return history_seqlen_; }
+    int32_t beam_size() const { return beam_size_; }
 
 private:
+    std::vector<int32_t> without_bos(const std::vector<int32_t>& ids) const;
+    bool is_history_prefix(const std::vector<int32_t>& ids) const;
+    InferenceError fill_incremental(const std::vector<int32_t>& new_ids);
+    InferenceError fill_from_scratch(const std::vector<int32_t>& context_ids);
+    bool cancelled(const std::atomic_bool* cancellation) const;
+    InferenceError fill_impl(const std::vector<int32_t>& new_ids);
+    InferenceError replace_context_impl(const std::vector<int32_t>& context_ids);
+    GenerateResult generate_impl(const std::vector<int32_t>& pinyin_ids,
+                                 const std::vector<int32_t>& context_ids,
+                                 const std::atomic_bool* cancellation);
+    void sync_from_context();
+    void sync_to_context();
+
     InferenceEngine& engine_;
+    context::Context* context_ = nullptr;
+    context::PersistentTensor self_kv_;
+    context::PersistentTensor fill_kv_;
+    std::vector<int32_t> history_ids_;
+    int32_t beam_size_ = 1;
+    int32_t current_seqlen_ = 0;
+    int32_t history_seqlen_ = 0;
 };
 
 }  // namespace phono::engine
-

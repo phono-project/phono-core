@@ -46,6 +46,10 @@ public:
     // maps from per-position logits. Returns "" if id is out of range.
     std::string id_to_chinese(int32_t id) const;
 
+    // Maps a Chinese-vocabulary id back to the corresponding context-vocab
+    // id for feeding generated characters into the decoder.
+    int32_t chinese_id_to_context_id(int32_t id) const;
+
 private:
     static int edit_distance(const std::string& a, const std::string& b);
 
