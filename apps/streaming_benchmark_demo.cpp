@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -113,7 +114,11 @@ int main(int argc, char** argv) {
                                     ? engine.pre_pass2_batch_size()
                                     : cfg.runtime.batch_size;
     nlohmann::json context_options = nlohmann::json::object();
-    std::ifstream context_config("core_configs/default.json");
+    std::ifstream context_config(
+        std::filesystem::path(package_root) / "core_configs/default.json");
+    if (!context_config.is_open()) {
+        context_config.open("core_configs/default.json");
+    }
     if (context_config.is_open()) {
         context_config >> context_options;
     }
