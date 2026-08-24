@@ -13,8 +13,6 @@
 //       chinese_vocab.txt
 //       context_vocab.txt
 //       pinyin_vocab.txt
-//     dict/
-//       dict_trie.json
 #pragma once
 
 #include <cstdint>
@@ -62,15 +60,6 @@ struct VocabPaths {
     std::vector<std::string> context_special_tokens = {"bos_token"};
 };
 
-// Viterbi decoding hyperparameters.
-struct DecodingParams {
-    double beta_single = 0.4636;
-    double beta_word = 0.4839;
-    double epsilon = 0.001;
-    int n_best = 3;
-    std::string trie_path = "dict/dict_trie.json";
-};
-
 // Runtime / packaging knobs.
 struct RuntimeParams {
     int32_t batch_size = 1;                // B in the exported cache tensors.
@@ -97,8 +86,10 @@ public:
     PreModelDims pre_model;
     PostModelDims post_model;
     VocabPaths vocabs;
-    DecodingParams decoding;
     RuntimeParams runtime;
+
+    std::string model_version = "";
+    int32_t model_format_version = 0;
 
     std::string package_root;
 };

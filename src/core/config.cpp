@@ -50,6 +50,9 @@ ModelPackageConfig ModelPackageConfig::load(const std::string& package_root) {
         throw std::runtime_error(oss.str());
     }
 
+    cfg.model_version = get_or<std::string>(root, "model_version", cfg.model_version);
+    cfg.model_format_version = get_or<int32_t>(root, "model_format_version", cfg.model_format_version);
+
     // common
     if (root.contains("common")) {
         const json& c = root.at("common");
@@ -89,16 +92,6 @@ ModelPackageConfig ModelPackageConfig::load(const std::string& package_root) {
             cfg.vocabs.context_special_tokens =
                 v.at("context_special_tokens").get<std::vector<std::string>>();
         }
-    }
-
-    // decoding
-    if (root.contains("decoding")) {
-        const json& d = root.at("decoding");
-        cfg.decoding.beta_single = get_or<double>(d, "beta_single", cfg.decoding.beta_single);
-        cfg.decoding.beta_word = get_or<double>(d, "beta_word", cfg.decoding.beta_word);
-        cfg.decoding.epsilon = get_or<double>(d, "epsilon", cfg.decoding.epsilon);
-        cfg.decoding.n_best = get_or<int>(d, "n_best", cfg.decoding.n_best);
-        cfg.decoding.trie_path = get_or<std::string>(d, "trie_path", cfg.decoding.trie_path);
     }
 
     // runtime
