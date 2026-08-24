@@ -109,9 +109,11 @@ else()
 endif()
 
 find_package(ICU REQUIRED COMPONENTS uc i18n)
+set(PHONO_ICU_INCLUDE_DIRS "${ICU_INCLUDE_DIRS}")
+set(PHONO_ICU_LIBRARIES ICU::uc ICU::i18n)
 
 # ═══════════════════════════════════════════════════════════════════════
-# phono_core: config, tokenizer, trie + Viterbi decoding, KV cache, context,
+# phono_core: config, tokenizer, KV cache, context,
 # inference engine. Everything except src/core and src/algo is ExecuTorch-
 # dependent (see src/context/kv_cache.cpp, src/engine/inference_engine.cpp).
 # ═══════════════════════════════════════════════════════════════════════
@@ -119,8 +121,6 @@ add_library(phono_core STATIC
     src/core/config.cpp
     src/core/tokenizer.cpp
     src/core/text_normalizer.cpp
-    src/algo/trie.cpp
-    src/algo/viterbi.cpp
     src/context/kv_cache.cpp
     src/context/context.cpp
     src/engine/inference_engine.cpp
@@ -130,9 +130,10 @@ target_include_directories(phono_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   include)
+target_include_directories(phono_core PRIVATE ${PHONO_ICU_INCLUDE_DIRS})
 target_compile_features(phono_core PUBLIC cxx_std_20)
 target_link_libraries(phono_core PUBLIC nlohmann_json::nlohmann_json)
-target_link_libraries(phono_core PUBLIC ICU::uc ICU::i18n)
+target_link_libraries(phono_core PUBLIC ${PHONO_ICU_LIBRARIES})
 
 # Core runtime + the two extensions we need.
 target_link_libraries(phono_core PUBLIC executorch)
