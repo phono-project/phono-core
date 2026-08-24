@@ -3,13 +3,11 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
-#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
 #include <executorch/extension/module/module.h>
 
-#include "algo/trie.hpp"
 #include "context/context.hpp"
 #include "context/kv_cache.hpp"
 #include "core/config.hpp"
@@ -71,9 +69,6 @@ public:
     const core::ModelPackageConfig& config() const { return config_; }
     const core::Tokenizer& tokenizer() const { return tokenizer_; }
 
-    void load_trie_from_json(const std::string& path) { trie_ = algo::load_trie(path); }
-    const nlohmann::json& trie() const { return trie_; }
-
     // These methods execute the v2 exported methods. They return the runtime
     // error instead of throwing so session methods can report a stable code.
     InferenceError run_pre_pass1(const std::vector<int32_t>& input_ids,
@@ -101,7 +96,6 @@ private:
     core::Tokenizer tokenizer_;
     std::unique_ptr<executorch::extension::Module> pre_module_;
     std::unique_ptr<executorch::extension::Module> post_module_;
-    nlohmann::json trie_;
     int32_t pre_pass1_batch_size_ = 0;
     int32_t pre_pass2_batch_size_ = 0;
 };
@@ -150,6 +144,7 @@ private:
     bool cancelled(const std::atomic_bool* cancellation) const;
     InferenceError fill_impl(const std::vector<int32_t>& new_ids);
     InferenceError replace_context_impl(const std::vector<int32_t>& context_ids);
+    int32_t context_capacity() const;
     GenerateResult generate_impl(const std::vector<int32_t>& pinyin_ids,
                                  const std::vector<int32_t>& context_ids,
                                  const std::atomic_bool* cancellation);

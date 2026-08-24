@@ -172,7 +172,6 @@ InferenceEngine::InferenceEngine(const std::string& package_root)
                                  runtime_error_message(err) + ")");
     }
 
-    load_trie_from_json(config_.resolve(config_.decoding.trie_path));
 }
 
 InferenceEngine::~InferenceEngine() = default;
@@ -397,9 +396,27 @@ InferenceError InferenceSession::fill_incremental(const std::vector<int32_t>& ne
     if (new_ids.empty()) {
         return InferenceError::Ok;
     }
-    const int32_t max_seqlen = engine_.config().pre_model.max_seqlen;
-    if (history_seqlen_ + static_cast<int32_t>(new_ids.size()) > max_seqlen) {
-        return InferenceError::ContextLimitExceeded;
+    const int32_t capacity = context_capacity();
+    if (new_ids.size() >= static_cast<size_t>(capacity)) {
+        const std::vector<int32_t> tail(
+            new_ids.end() - capacity, new_ids.end());
+        return fill_from_scratch(tail);
+    }
+    const int32_t old_content = static_cast<int32_t>(history_ids_.size());
+    const int32_t overflow = old_content + static_cast<int32_t>(new_ids.size()) - capacity;
+    if (overflow > 0) {
+        if (overflow >= old_content) {
+            const std::vector<int32_t> tail(
+                new_ids.begin() + (overflow - old_content), new_ids.end());
+            return fill_from_scratch(tail);
+        }
+        for (int32_t batch = 0; batch < beam_size_; ++batch) {
+            self_kv_.shift_batch_tokens(batch, overflow, old_content - overflow);
+        }
+        fill_kv_.shift_batch_tokens(0, overflow, old_content - overflow);
+        history_ids_.erase(history_ids_.begin(), history_ids_.begin() + overflow);
+        history_seqlen_ = 1 + static_cast<int32_t>(history_ids_.size());
+        current_seqlen_ = history_seqlen_;
     }
 
     const int32_t prefill_batch = engine_.pre_pass1_batch_size();
@@ -432,24 +449,25 @@ InferenceError InferenceSession::fill_incremental(const std::vector<int32_t>& ne
 }
 
 InferenceError InferenceSession::fill_from_scratch(const std::vector<int32_t>& context_ids) {
-    const int32_t max_seqlen = engine_.config().pre_model.max_seqlen;
-    if (context_ids.size() + 1 > static_cast<size_t>(max_seqlen)) {
-        return InferenceError::ContextLimitExceeded;
+    const int32_t capacity = context_capacity();
+    std::vector<int32_t> effective_ids = context_ids;
+    if (effective_ids.size() > static_cast<size_t>(capacity)) {
+        effective_ids.erase(effective_ids.begin(), effective_ids.end() - capacity);
     }
     self_kv_.zero_();
     fill_kv_.zero_();
     history_ids_.clear();
     current_seqlen_ = 0;
     history_seqlen_ = 0;
-    if (context_ids.empty()) {
+    if (effective_ids.empty()) {
         return InferenceError::Ok;
     }
 
     const int32_t bos = engine_.tokenizer().special_token_id("bos_token");
     std::vector<int32_t> causal_ids;
-    causal_ids.reserve(context_ids.size() + 1);
+    causal_ids.reserve(effective_ids.size() + 1);
     causal_ids.push_back(bos);
-    causal_ids.insert(causal_ids.end(), context_ids.begin(), context_ids.end());
+    causal_ids.insert(causal_ids.end(), effective_ids.begin(), effective_ids.end());
     const int32_t prefill_batch = engine_.pre_pass1_batch_size();
     if (prefill_batch != 0 && prefill_batch != 1 && prefill_batch != beam_size_) {
         return InferenceError::InvalidArgument;
@@ -472,25 +490,22 @@ InferenceError InferenceSession::fill_from_scratch(const std::vector<int32_t>& c
             fill_kv_, 0, 0, 0, static_cast<int32_t>(causal_ids.size()));
         self_kv_.copy_batch_slice_to_all(0, 0, static_cast<int32_t>(causal_ids.size()));
     }
-    history_ids_ = context_ids;
+    history_ids_ = effective_ids;
     history_seqlen_ = static_cast<int32_t>(causal_ids.size());
     current_seqlen_ = history_seqlen_;
     return InferenceError::Ok;
 }
 
 InferenceError InferenceSession::replace_context_impl(const std::vector<int32_t>& context_ids) {
-    const std::vector<int32_t> target = without_bos(context_ids);
+    std::vector<int32_t> target = without_bos(context_ids);
     if (std::any_of(target.begin(), target.end(), [&](int32_t id) {
             return id < 0 || id >= engine_.tokenizer().context_vocab_size();
         })) {
         return InferenceError::InvalidArgument;
     }
-    if (target.size() + 1 > static_cast<size_t>(engine_.config().pre_model.max_seqlen)) {
-        return InferenceError::ContextLimitExceeded;
-    }
-    if (context_ != nullptr &&
-        target.size() > static_cast<size_t>(context_->context_ids_capacity())) {
-        return InferenceError::ContextLimitExceeded;
+    const int32_t capacity = context_capacity();
+    if (target.size() > static_cast<size_t>(capacity)) {
+        target.erase(target.begin(), target.end() - capacity);
     }
     if (target == history_ids_) {
         current_seqlen_ = history_seqlen_;
@@ -513,17 +528,20 @@ InferenceError InferenceSession::replace_context_impl(const std::vector<int32_t>
     return fill_from_scratch(target);
 }
 
+int32_t InferenceSession::context_capacity() const {
+    int32_t capacity = engine_.config().pre_model.max_seqlen - 1;
+    if (context_ != nullptr) {
+        capacity = std::min(capacity, context_->context_ids_capacity());
+    }
+    return std::max(0, capacity);
+}
+
 InferenceError InferenceSession::fill_impl(const std::vector<int32_t>& new_ids) {
     const std::vector<int32_t> ids = without_bos(new_ids);
     if (std::any_of(ids.begin(), ids.end(), [&](int32_t id) {
             return id < 0 || id >= engine_.tokenizer().context_vocab_size();
         })) {
         return InferenceError::InvalidArgument;
-    }
-    if (context_ != nullptr &&
-        history_ids_.size() + ids.size() >
-            static_cast<size_t>(context_->context_ids_capacity())) {
-        return InferenceError::ContextLimitExceeded;
     }
     if (ids.empty()) {
         return InferenceError::Ok;
@@ -632,6 +650,7 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
         // Every position from a previous cross-attention generation is dirty
         // when there is no causal history and must not be read by this run.
         self_kv_.zero_();
+        fill_kv_.zero_();
         current_seqlen_ = 0;
         refresh_state();
     }
@@ -655,19 +674,30 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
         return result;
     }
 
-    std::vector<int32_t> first_input(static_cast<size_t>(beam_size_),
+    const int32_t pre2_batch = engine_.pre_pass2_batch_size();
+    if (pre2_batch != 0 && pre2_batch != 1 && pre2_batch != beam_size_) {
+        result.error = InferenceError::InvalidArgument;
+        refresh_state();
+        return result;
+    }
+    const int32_t first_batch = pre2_batch == beam_size_ ? beam_size_ : 1;
+    std::vector<int32_t> first_input(static_cast<size_t>(first_batch),
                                      has_history ? history_ids_.back()
                                                  : engine_.tokenizer().special_token_id("bos_token"));
-    std::vector<int32_t> first_positions(static_cast<size_t>(beam_size_), first_position);
+    std::vector<int32_t> first_positions(static_cast<size_t>(first_batch), first_position);
+    context::PersistentTensor& first_cache = first_batch == 1 ? fill_kv_ : self_kv_;
     const std::vector<float> clean_history_last = has_history
-                                                       ? self_kv_.snapshot_batch_slice(0, first_position, 1)
+                                                       ? first_cache.snapshot_batch_slice(0, first_position, 1)
                                                        : std::vector<float>();
     DecoderModelOutput decoder;
-    error = engine_.run_pre_pass2(first_input, self_kv_, first_positions, post, 0, decoder);
+    error = engine_.run_pre_pass2(first_input, first_cache, first_positions, post, 0, decoder);
     if (has_history) {
-        for (int32_t batch = 0; batch < beam_size_; ++batch) {
-            self_kv_.restore_batch_slice(batch, first_position, 1, clean_history_last);
+        for (int32_t batch = 0; batch < first_batch; ++batch) {
+            first_cache.restore_batch_slice(batch, first_position, 1, clean_history_last);
         }
+    } else if (first_batch == 1) {
+        self_kv_.copy_batch_slice_from(fill_kv_, 0, 0, 0, 1);
+        self_kv_.copy_batch_slice_to_all(0, 0, 1);
     }
     refresh_state();
     if (cancelled(cancellation)) {
