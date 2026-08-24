@@ -1,6 +1,8 @@
 #include "context/context.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <stdexcept>
 
 namespace phono::context {
@@ -60,6 +62,9 @@ ContextManager::Params ContextManager::parse_params(const core::ModelPackageConf
     params.slack_tokens = options.value("N", params.slack_tokens);
     params.match_threshold = options.value("T", params.match_threshold);
     params.max_context_length = options.value("max_context_length", cfg.pre_model.max_seqlen - 1);
+    params.trial_ratio = options.value("trial_ratio", params.trial_ratio);
+    params.decay_alpha = options.value("decay_alpha", params.decay_alpha);
+    params.decay_lambda = options.value("decay_lambda", params.decay_lambda);
 
     if (params.beam_size <= 0) {
         throw std::invalid_argument("ContextManager: beam_size must be positive");
@@ -73,6 +78,11 @@ ContextManager::Params ContextManager::parse_params(const core::ModelPackageConf
     if (params.max_context_length < 0 || params.max_context_length + 1 > cfg.pre_model.max_seqlen) {
         throw std::invalid_argument(
             "ContextManager: max_context_length must fit pre_model.max_seqlen including BOS");
+    }
+    if (!(params.trial_ratio > 0.0 && params.trial_ratio <= 1.0) ||
+        !(params.decay_alpha >= 0.0) || !(params.decay_lambda >= 0.0)) {
+        throw std::invalid_argument(
+            "ContextManager: trial_ratio, decay_alpha, and decay_lambda are invalid");
     }
     return params;
 }
@@ -95,7 +105,8 @@ ContextManager::ContextManager(const core::ModelPackageConfig& cfg, size_t num_c
 
     max_ids_ = static_cast<size_t>(params_.max_context_length);
     stacked_ids_.assign(num_contexts * max_ids_, 0);
-    use_ticks_.assign(num_contexts, 0);
+    protected_slots_.assign(num_contexts, false);
+    last_access_.assign(num_contexts, std::chrono::steady_clock::now());
 
     contexts_.reserve(num_contexts);
     for (size_t i = 0; i < num_contexts; ++i) {
@@ -159,6 +170,62 @@ const Context* ContextManager::get_context_by_full_matching(
     return nullptr;
 }
 
+size_t ContextManager::trial_capacity() const {
+    const size_t capacity = static_cast<size_t>(std::ceil(
+        static_cast<double>(contexts_.size()) * params_.trial_ratio));
+    return std::max<size_t>(1, std::min(capacity, contexts_.size()));
+}
+
+double ContextManager::slot_value(size_t index) const {
+    const double length = static_cast<double>(
+        std::max<int32_t>(1, contexts_[index].context_ids_len()));
+    const double age = std::chrono::duration<double>(  // second
+        std::chrono::steady_clock::now() - last_access_[index]).count();
+    return std::pow(length, params_.decay_alpha) * std::exp(-params_.decay_lambda * age);
+}
+
+size_t ContextManager::weakest_slot(bool trial_only, size_t excluded) const {
+    size_t selected = contexts_.size();
+    double selected_value = std::numeric_limits<double>::infinity();
+    for (size_t i = 0; i < contexts_.size(); ++i) {
+        if (i == excluded || contexts_[i].empty() || (trial_only && protected_slots_[i])) {
+            continue;
+        }
+        const double value = slot_value(i);
+        if (value < selected_value) {
+            selected = i;
+            selected_value = value;
+        }
+    }
+    return selected;
+}
+
+void ContextManager::touch_slot(size_t index, bool promote) {
+    if (promote && !protected_slots_[index]) {
+        size_t protected_count = 0;
+        for (bool is_protected : protected_slots_) protected_count += is_protected ? 1 : 0;
+        const size_t protected_capacity = contexts_.size() - trial_capacity();
+        if (protected_capacity > 0 && protected_count >= protected_capacity) {
+            size_t demoted = contexts_.size();
+            double demoted_value = std::numeric_limits<double>::infinity();
+            for (size_t i = 0; i < contexts_.size(); ++i) {
+                if (i != index && protected_slots_[i]) {
+                    const double value = slot_value(i);
+                    if (value < demoted_value) {
+                        demoted = i;
+                        demoted_value = value;
+                    }
+                }
+            }
+            if (demoted < contexts_.size()) {
+                protected_slots_[demoted] = false;
+            }
+        }
+        if (protected_capacity > 0) protected_slots_[index] = true;
+    }
+    last_access_[index] = std::chrono::steady_clock::now();
+}
+
 size_t ContextManager::choose_replacement_slot() {
     for (size_t i = 0; i < contexts_.size(); ++i) {
         if (contexts_[i].empty()) {
@@ -166,16 +233,17 @@ size_t ContextManager::choose_replacement_slot() {
         }
     }
 
-    return static_cast<size_t>(std::min_element(use_ticks_.begin(), use_ticks_.end()) -
-                               use_ticks_.begin());
+    const size_t trial = weakest_slot(true, contexts_.size());
+    return trial < contexts_.size() ? trial : weakest_slot(false, contexts_.size());
 }
 
 Context* ContextManager::get_context_auto(const std::vector<int32_t>& token_ids) {
-    if (token_ids.size() > max_ids_) {
-        throw std::out_of_range("ContextManager::get_context_auto: context length exceeds configured limit");
+    std::vector<int32_t> target_ids = token_ids;
+    if (target_ids.size() > max_ids_) {
+        target_ids.erase(target_ids.begin(), target_ids.end() - max_ids_);
     }
 
-    const int32_t target_len = static_cast<int32_t>(token_ids.size());
+    const int32_t target_len = static_cast<int32_t>(target_ids.size());
     int best_prefix = -1;
     int best_prefix_len = -1;
     for (size_t i = 0; i < contexts_.size(); ++i) {
@@ -187,7 +255,7 @@ Context* ContextManager::get_context_auto(const std::vector<int32_t>& token_ids)
         const int32_t prefix_length = std::min(slot_len, target_len);
         int32_t common = 0;
         while (common < prefix_length &&
-               ctx.context_ids()[common] == token_ids[static_cast<size_t>(common)]) {
+               ctx.context_ids()[common] == target_ids[static_cast<size_t>(common)]) {
             ++common;
         }
         if (common > 0 && common > best_prefix_len) {
@@ -209,7 +277,7 @@ Context* ContextManager::get_context_auto(const std::vector<int32_t>& token_ids)
             const int length = std::min(target_len, slot_len - offset);
             int common = 0;
             while (common < length &&
-                   ctx.context_ids()[offset + common] == token_ids[static_cast<size_t>(common)]) {
+                   ctx.context_ids()[offset + common] == target_ids[static_cast<size_t>(common)]) {
                 ++common;
             }
             if (common >= params_.match_threshold &&
@@ -229,7 +297,7 @@ Context* ContextManager::get_context_auto(const std::vector<int32_t>& token_ids)
                 const int length = std::min(target_len, slot_len - offset);
                 int common = 0;
                 while (common < length &&
-                       ctx.context_ids()[offset + common] == token_ids[static_cast<size_t>(common)]) {
+                       ctx.context_ids()[offset + common] == target_ids[static_cast<size_t>(common)]) {
                     ++common;
                 }
                 if (common >= params_.match_threshold && common >= best.length) {
@@ -244,7 +312,7 @@ Context* ContextManager::get_context_auto(const std::vector<int32_t>& token_ids)
         ctx.truncate_context_ids(best_prefix_len);
         ctx.set_history_seqlen(1 + best_prefix_len);
         ctx.set_current_position(1 + best_prefix_len);
-        use_ticks_[static_cast<size_t>(best_prefix)] = next_tick_++;
+        touch_slot(static_cast<size_t>(best_prefix), true);
         return &ctx;
     }
 
@@ -254,15 +322,17 @@ Context* ContextManager::get_context_auto(const std::vector<int32_t>& token_ids)
         Context& ctx = contexts_[selected];
         ctx.shift_cached_tokens(best.offset, best.length);
         ctx.truncate_context_ids(0);
-        ctx.append_context_ids(token_ids.data(), best.length);
+        ctx.append_context_ids(target_ids.data(), best.length);
         ctx.set_history_seqlen(1 + best.length);
         ctx.set_current_position(1 + best.length);
+        touch_slot(selected, true);
     } else {
         selected = choose_replacement_slot();
         contexts_[selected].clear();
+        protected_slots_[selected] = false;
+        touch_slot(selected, false);
     }
 
-    use_ticks_[selected] = next_tick_++;
     return &contexts_[selected];
 }
 

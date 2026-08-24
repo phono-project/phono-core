@@ -16,6 +16,7 @@
 //   init and reused by get_context_auto().
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -87,6 +88,9 @@ public:
         int32_t slack_tokens = 8;    // JSON key: N
         int32_t match_threshold = 8; // JSON key: T
         int32_t max_context_length = 127;
+        double trial_ratio = 0.25;
+        double decay_alpha = 0.5;
+        double decay_lambda = 1.0 / 60.0;
     };
 
     // Allocates the stacked KV caches and the stacked context-ids buffer up
@@ -125,14 +129,18 @@ private:
                                const nlohmann::json& options);
     Context make_context(size_t index);
     size_t choose_replacement_slot();
+    double slot_value(size_t index) const;
+    void touch_slot(size_t index, bool promote);
+    size_t weakest_slot(bool trial_only, size_t excluded) const;
+    size_t trial_capacity() const;
 
     core::ModelPackageConfig cfg_;
     Params params_;
     PersistentTensor stacked_pre_self_kv_;  // (num_contexts, pre_layers, 2, B, pre_max, ...)
     std::vector<int32_t> stacked_ids_;      // (num_contexts, max_ids) int32
     std::vector<Context> contexts_;         // fixed size, addresses stable after init
-    std::vector<uint64_t> use_ticks_;
-    uint64_t next_tick_ = 1;
+    std::vector<bool> protected_slots_;
+    std::vector<std::chrono::steady_clock::time_point> last_access_;
     size_t max_ids_ = 0;
 };
 
