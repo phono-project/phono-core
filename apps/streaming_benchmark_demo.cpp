@@ -1,5 +1,5 @@
 // Usage:
-//   streaming_benchmark_demo <model_package_dir>
+//   streaming_benchmark_demo <model_package_dir> [core_config_json]
 
 #include <atomic>
 #include <chrono>
@@ -30,6 +30,7 @@
   #include <unistd.h>
 #endif
 
+#include "core/config.hpp"
 #include "engine/inference_engine.hpp"
 
 namespace {
@@ -37,6 +38,30 @@ namespace {
 std::atomic_bool g_cancelled{false};
 
 extern "C" void handle_sigint(int) { g_cancelled.store(true, std::memory_order_relaxed); }
+
+bool cancellation_check(void* user_data) {
+    auto* flag = static_cast<std::atomic_bool*>(user_data);
+    return flag->load(std::memory_order_relaxed);
+}
+
+nlohmann::json load_core_config(const std::string& package_root,
+                                const std::string& override_path) {
+    std::ifstream in;
+    if (!override_path.empty()) {
+        in.open(override_path);
+    }
+    if (!in.is_open()) {
+        in.open(std::filesystem::path(package_root) / "core_configs/default.json");
+    }
+    if (!in.is_open()) {
+        in.open("core_configs/default.json");
+    }
+    nlohmann::json options = nlohmann::json::object();
+    if (in.is_open()) {
+        in >> options;
+    }
+    return options;
+}
 
 enum class ReadStatus { Ok, Eof, Interrupted };
 
@@ -99,43 +124,41 @@ void print_separator() { std::cout << std::string(72, '-') << '\n'; }
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::cerr << "usage: " << argv[0] << " <model_package_dir>" << std::endl;
+        std::cerr << "usage: " << argv[0] << " <model_package_dir> [core_config_json]" << std::endl;
         return 2;
     }
 
     std::signal(SIGINT, handle_sigint);
     const std::string package_root = argv[1];
+    const std::string core_config_path = argc > 2 ? argv[2] : std::string();
     std::cout << "Loading model package from: " << package_root << std::endl;
 
     phono::engine::InferenceEngine engine(package_root);
     const auto& cfg = engine.config();
     const auto& tokenizer = engine.tokenizer();
-    const int32_t model_batch = engine.pre_pass2_batch_size() > 0
-                                    ? engine.pre_pass2_batch_size()
-                                    : cfg.runtime.batch_size;
-    nlohmann::json context_options = nlohmann::json::object();
-    std::ifstream context_config(
-        std::filesystem::path(package_root) / "core_configs/default.json");
-    if (!context_config.is_open()) {
-        context_config.open("core_configs/default.json");
+
+    const nlohmann::json core_options = load_core_config(package_root, core_config_path);
+    phono::core::CoreConfig core_config;
+    const phono::core::CoreConfigError config_error =
+        phono::core::parse_core_config(core_options, cfg, core_config);
+    if (config_error != phono::core::CoreConfigError::Ok) {
+        std::cerr << "invalid core config: "
+                  << phono::core::core_config_error_name(config_error) << std::endl;
+        return static_cast<int>(config_error);
     }
-    if (context_config.is_open()) {
-        context_config >> context_options;
-    }
-    context_options["beam_size"] = model_batch;
-    context_options["max_context_length"] = std::min(
-        context_options.value("max_context_length", cfg.pre_model.max_seqlen - 1),
-        cfg.pre_model.max_seqlen - 1);
-    phono::context::ContextManager context_manager(cfg, 1, context_options);
+
+    phono::context::ContextManager context_manager(cfg, 1, core_config);
     phono::context::Context* slot = context_manager.get_context_auto({});
-    phono::engine::InferenceSession session(engine, *slot);
+    phono::engine::InferenceSession session(engine, core_config);
 
     std::cout << "  context_vocab_size = " << tokenizer.context_vocab_size() << '\n'
               << "  pinyin_vocab_size  = " << tokenizer.pinyin_vocab_size() << '\n'
               << "  chinese_vocab_size = " << tokenizer.chinese_vocab_size() << '\n'
               << "  beam size          = " << session.beam_size() << '\n'
               << "  pre_model.max_seqlen = " << cfg.pre_model.max_seqlen << '\n'
-              << "  post_model.max_seqlen = " << cfg.post_model.max_seqlen << '\n';
+              << "  post_model.max_seqlen = " << cfg.post_model.max_seqlen << '\n'
+              << "  max_history_length  = " << core_config.max_history_length << '\n'
+              << "  max_pinyin_length   = " << core_config.max_pinyin_length << '\n';
     print_separator();
     std::cout << "Type space-separated pinyin (e.g. 'ni hao'), then pick a candidate."
               << " Press Ctrl-C to stop.\n";
@@ -160,7 +183,7 @@ int main(int argc, char** argv) {
         slot = context_manager.get_context_auto(context_ids);
         const auto start = std::chrono::high_resolution_clock::now();
         const phono::engine::GenerateResult generated =
-            session.generate(pinyin_ids, context_ids, &g_cancelled);
+            session.generate(*slot, pinyin_ids, context_ids, cancellation_check, &g_cancelled);
         const auto end = std::chrono::high_resolution_clock::now();
         const double elapsed_us =
             std::chrono::duration<double, std::micro>(end - start).count();
@@ -213,7 +236,7 @@ int main(int argc, char** argv) {
             new_context_ids.push_back(context_id);
         }
         if (new_context_ids.empty()) continue;
-        const auto fill_error = session.fill(new_context_ids);
+        const auto fill_error = session.fill(*slot, new_context_ids);
         if (fill_error != phono::engine::InferenceError::Ok) {
             std::cout << "  ! context fill failed: "
                       << phono::engine::inference_error_name(fill_error) << '\n';
@@ -230,8 +253,7 @@ int main(int argc, char** argv) {
               << "  windows            : " << window_count << '\n'
               << "  committed chars    : " << committed_chars << '\n'
               << "  committed text     : \"" << committed_text << "\"\n"
-              << "  current_seqlen     : " << session.current_seqlen() << '\n'
-              << "  history_seqlen     : " << session.history_seqlen() << '\n';
+              << "  history length     : " << slot->context_ids_len() << '\n';
     if (!latencies_us.empty()) {
         const double total = std::accumulate(latencies_us.begin(), latencies_us.end(), 0.0);
         std::cout << "  generation latency (us):\n"
