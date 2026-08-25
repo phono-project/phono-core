@@ -108,9 +108,30 @@ else()
   add_subdirectory(${EXECUTORCH_SOURCE_DIR} ${CMAKE_BINARY_DIR}/executorch_build)
 endif()
 
-find_package(ICU REQUIRED COMPONENTS uc i18n)
-set(PHONO_ICU_INCLUDE_DIRS "${ICU_INCLUDE_DIRS}")
-set(PHONO_ICU_LIBRARIES ICU::uc ICU::i18n)
+find_package(uni-algo CONFIG REQUIRED)
+set(PHONO_UNI_ALGO_LIBRARIES uni-algo::uni-algo)
+
+# ═══════════════════════════════════════════════════════════════════════
+# zh2Hans dictionary codegen
+#
+# The Traditional -> Simplified rules are kept as a small JSON resource
+# (res/zh2hans.json) and compiled into a native C++ table at configure time
+# by the pixi Python interpreter (codegen/zh2hans_codegen.py). The output
+# header is src/gen/zh2hansdict.h.
+# ═══════════════════════════════════════════════════════════════════════
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+set(PHONO_ZH2HANS_JSON "${CMAKE_SOURCE_DIR}/res/zh2hans.json")
+set(PHONO_ZH2HANS_HEADER "${CMAKE_SOURCE_DIR}/src/gen/zh2hansdict.h")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PHONO_ZH2HANS_JSON}")
+
+execute_process(
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/codegen/zh2hans_codegen.py"
+          --input "${PHONO_ZH2HANS_JSON}" --output "${PHONO_ZH2HANS_HEADER}"
+  RESULT_VARIABLE PHONO_ZH2HANS_CODEGEN_RES)
+if(NOT PHONO_ZH2HANS_CODEGEN_RES EQUAL 0)
+  message(FATAL_ERROR "phono-core: zh2hans codegen failed (see output above)")
+endif()
 
 # ═══════════════════════════════════════════════════════════════════════
 # Output layout
@@ -135,6 +156,7 @@ set(PHONO_CORE_SOURCES
     src/core/config.cpp
     src/core/tokenizer.cpp
     src/core/text_normalizer.cpp
+    src/algo/zh2hans.cpp
     src/context/kv_cache.cpp
     src/context/context.cpp
     src/engine/inference_engine.cpp
@@ -186,10 +208,9 @@ function(phono_configure_target TARGET LINK_VISIBILITY)
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/interface
     include)
-  target_include_directories(${TARGET} PRIVATE ${PHONO_ICU_INCLUDE_DIRS})
   target_compile_features(${TARGET} PUBLIC cxx_std_20)
   target_link_libraries(${TARGET} ${LINK_VISIBILITY} nlohmann_json::nlohmann_json)
-  target_link_libraries(${TARGET} ${LINK_VISIBILITY} ${PHONO_ICU_LIBRARIES})
+  target_link_libraries(${TARGET} ${LINK_VISIBILITY} ${PHONO_UNI_ALGO_LIBRARIES})
   phono_link_executorch(${TARGET} ${LINK_VISIBILITY})
 endfunction()
 

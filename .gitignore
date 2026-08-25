@@ -5,6 +5,7 @@ vcpkg_installed
 triplets
 third_party
 build
+src/gen
 pixi.lock
 cache
 pixi.lock

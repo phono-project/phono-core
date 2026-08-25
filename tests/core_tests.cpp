@@ -4,8 +4,10 @@
 #include <string>
 #include <vector>
 
+#include "algo/zh2hans.hpp"
 #include "context/context.hpp"
 #include "core/config.hpp"
+#include "core/text_normalizer.hpp"
 #include "core/tokenizer.hpp"
 
 namespace {
@@ -65,6 +67,40 @@ void test_tokenizer_normalizes_and_skips_unknown() {
     check(tokenizer.chinese_id_to_context_id(99) == -1, "unknown Chinese id should fail");
 
     std::filesystem::remove_all(dir);
+}
+
+void test_zh2hans_simplification() {
+    using phono::algo::to_simplified_zh;
+    using phono::core::normalize_text_utf8;
+
+    // 臺 -> 台 (single-character rule).
+    check(to_simplified_zh("\xE8\x87\xBA") == "\xE5\x8F\xB0", "臺 should simplify to 台");
+    // 乾 -> 干 (single-character rule).
+    check(to_simplified_zh("\xE4\xB9\xBE") == "\xE5\xB9\xB2", "乾 should simplify to 干");
+    // 一釐 -> 一厘 (phrase rule).
+    check(to_simplified_zh("\xE4\xB8\x80\xE9\x87\x90") == "\xE4\xB8\x80\xE5\x8E\x98",
+          "一釐 should simplify to 一厘");
+    // 上昇 -> 上升 (phrase rule).
+    check(to_simplified_zh("\xE4\xB8\x8A\xE6\x98\x87") == "\xE4\xB8\x8A\xE5\x8D\x87",
+          "上昇 should simplify to 上升");
+    // Maximal munch: the identity phrase rule 《易乾 shields 乾 from the
+    // single-character rule, so it must NOT become 《易干.
+    check(to_simplified_zh("\xE3\x80\x8A\xE6\x98\x93\xE4\xB9\xBE") ==
+              "\xE3\x80\x8A\xE6\x98\x93\xE4\xB9\xBE",
+          "《易乾 identity phrase should shield 乾");
+    // Fallback to per-character conversion when no phrase matches: 臺北 -> 台北.
+    check(to_simplified_zh("\xE8\x87\xBA\xE5\x8C\x97") == "\xE5\x8F\xB0\xE5\x8C\x97",
+          "臺北 should simplify character by character");
+    // ASCII passes through untouched.
+    check(to_simplified_zh("Hello \xE8\x87\xBA") == "Hello \xE5\x8F\xB0",
+          "ASCII should pass through unchanged");
+    check(to_simplified_zh("").empty(), "empty input should stay empty");
+
+    // Full normalization: traditional char simplified, full-width A -> A.
+    check(normalize_text_utf8("\xE8\x87\xBA\xEF\xBC\xA1X") == "\xE5\x8F\xB0"
+                                                              "AX",
+          "normalize_text_utf8 should simplify and NFKC-normalize");
+    check(normalize_text_utf8("").empty(), "empty normalization input should stay empty");
 }
 
 void test_cache_slice_operations() {
@@ -281,6 +317,7 @@ void test_core_config_validation() {
 
 int main() {
     test_tokenizer_normalizes_and_skips_unknown();
+    test_zh2hans_simplification();
     test_cache_slice_operations();
     test_context_auto_matching();
     test_core_config_default_and_parse();
