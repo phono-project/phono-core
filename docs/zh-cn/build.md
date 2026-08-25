@@ -4,8 +4,8 @@
 
 phono-core 的构建需要以下组件：
 
-- pixi：用于创建统一的构建环境（提供 Python、CMake、Ninja 与 C/C++ 编译器，并负责拉取 ExecuTorch 的 Python 依赖）。
-- vcpkg：提供 ICU 与 nlohmann-json 两个 C++ 依赖，由仓库根目录的 vcpkg.json 声明。若系统已安装 ICU，也可以不经过 vcpkg，直接让 CMake 找到系统 ICU。
+- pixi：用于创建统一的构建环境（提供 Python、CMake、Ninja 与 C/C++ 编译器，并负责拉取 ExecuTorch 的 Python 依赖）。Python 还在 CMake 配置期运行 codegen，把繁体-简体（zh2Hans）规则编译成原生 C++ 表。
+- vcpkg：提供 uni-algo 与 nlohmann-json 两个 C++ 依赖，由仓库根目录的 vcpkg.json 声明。
 - 网络连接：pixi 需要下载 Python 包；pixi run setup 需要克隆 ExecuTorch 源码（含子模块）。
 
 ## 通用流程
@@ -46,7 +46,7 @@ pixi run config
 pixi run build
 ```
 
-pixi 的 linux-64 平台（linux-glibc228）使用 glibc 2.28 作为目标，生成的二进制可部署到较老的发行版。若系统缺少 ICU，保持 VCPKG_ROOT 导出即可，vcpkg 会自动下载编译 ICU；若系统 ICU 可用且希望跳过 vcpkg，可在 config 阶段追加 -DCMAKE_TOOLCHAIN_FILE= 为空并让 CMake 直接查找系统 ICU。
+pixi 的 linux-64 平台（linux-glibc228）使用 glibc 2.28 作为目标，生成的二进制可部署到较老的发行版。请保持 VCPKG_ROOT 导出，vcpkg 会自动下载编译 uni-algo；构建还要求 pixi 环境提供 Python3，供配置期 codegen 使用。
 
 ## macOS
 
@@ -87,6 +87,5 @@ Windows 上 CMake 会定义 NOMINMAX 与 WIN32_LEAN_AND_MEAN，避免 windows.h 
 ## 常见问题
 
 - ExecuTorch 克隆失败：检查网络与代理设置，删除 third_party/executorch 后重试 pixi run setup。
-- vcpkg 编译 ICU 缓慢：首次配置会下载并编译 ICU，耗时较长属正常现象；可提前运行 pixi run config 预演。
-- 找不到 ICU：确认 VCPKG_ROOT 已导出，或系统中已安装 ICU（Linux 的 libicu-dev、macOS 的 icu4c 通过 brew）。
+- zh2Hans codegen 失败：确认在 pixi 环境中运行 pixi run config（配置期会调用 Python3 执行 codegen/zh2hans_codegen.py）；也可直接运行 `python codegen/zh2hans_codegen.py --input res/zh2hans.json --output src/gen/zh2hansdict.h` 复现。
 - 模型加载失败：模型包必须是 v2 格式（config.json 中 model_format_version 为 2，pre 程序包含 pre_model_pass1 与 pre_model_pass2）。

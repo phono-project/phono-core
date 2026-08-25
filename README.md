@@ -21,8 +21,9 @@ The code is organized into four subdirectories — src/core, src/algo, src/conte
 - src/core — 与 ExecuTorch 无关的纯逻辑，命名空间 phono::core
   - config — 加载模型包的 config.json 并校验维度配置；同时提供运行期 core_config 的解析与校验（解析 core_configs/default.json 中的运行参数，并对照模型硬限制返回错误枚举）
   - tokenizer — 汉字、上下文、拼音三份词表的编码与解码，拼音未命中时按编辑距离回退到最近音节
-  - utf8_util — UTF-8 逐字符切分工具
+  - utf8_util — UTF-8 逐字符切分工具（基于 uni-algo）
 - src/algo — 与 ExecuTorch 无关的解码算法，命名空间 phono::algo
+  - zh2hans — 繁体转简体（zh2Hans）最长匹配替换，字典由 res/zh2hans.json 配置期 codegen
 - src/context — 流式上下文状态，命名空间 phono::context
   - kv_cache — PersistentTensor：零拷贝的持久缓存缓冲区及其子视图
   - context — Context / ContextManager：B 路 self-KV Cache 视图、token id 序列，以及可复用上下文槽位管理
@@ -40,8 +41,9 @@ The code is organized into four subdirectories — src/core, src/algo, src/conte
 - src/core — ExecuTorch-independent pure logic, namespace phono::core
   - config — loads the model package's config.json and validates dimension configs; also parses and validates the runtime core_config (from core_configs/default.json) against the model's hard limits, returning an error enum instead of crashing
   - tokenizer — encode/decode for the Chinese, context and pinyin vocabularies; out-of-vocabulary pinyin falls back to the nearest syllable by edit distance
-  - utf8_util — UTF-8 per-character splitting utilities
+  - utf8_util — UTF-8 per-character splitting utilities (backed by uni-algo)
 - src/algo — ExecuTorch-independent decoding algorithms, namespace phono::algo
+  - zh2hans — Traditional->Simplified (zh2Hans) longest-match replacement; the table is code-generated from res/zh2hans.json at configure time
 - src/context — streaming context state, namespace phono::context
   - kv_cache — PersistentTensor: zero-copy persistent cache buffers and sub-views
   - context — Context / ContextManager: B-wide self-KV-cache views, token-id sequences, and reusable context slots
@@ -98,7 +100,7 @@ The v2 model requires the pre program to expose pre_model_pass1 and pre_model_pa
 
 ## 构建与运行
 
-前置要求：pixi 环境与 vcpkg。ICU 和 nlohmann-json 由 vcpkg.json 管理；如果系统没有 ICU，请设置 CMAKE_TOOLCHAIN_FILE 指向 vcpkg toolchain。ExecuTorch 由 pixi 任务拉取源码后随主工程一起编译：
+前置要求：pixi 环境与 vcpkg。uni-algo 与 nlohmann-json 由 vcpkg.json 管理；繁体-简体（zh2Hans）规则在 res/zh2hans.json 中维护，由 pixi 环境里的 Python 在 CMake 配置期 codegen 成原生 C++ 表（codegen/zh2hans_codegen.py）。ExecuTorch 由 pixi 任务拉取源码后随主工程一起编译：
 
 - pixi run setup — 将 ExecuTorch（含子模块）克隆到 third_party/executorch，已存在时跳过
 - pixi run config — 配置 CMake 构建
@@ -110,7 +112,7 @@ The v2 model requires the pre program to expose pre_model_pass1 and pre_model_pa
 
 ## Build & Run
 
-Prerequisites: the pixi environment and vcpkg. ICU and nlohmann-json are declared in vcpkg.json; if ICU is not installed system-wide, set CMAKE_TOOLCHAIN_FILE to the vcpkg toolchain. The pixi task fetches ExecuTorch's source and it is compiled together with this project:
+Prerequisites: the pixi environment and vcpkg. uni-algo and nlohmann-json are declared in vcpkg.json; the Traditional->Simplified (zh2Hans) rules live in res/zh2hans.json and are compiled into a native C++ table by pixi's Python at CMake configure time (codegen/zh2hans_codegen.py). The pixi task fetches ExecuTorch's source and it is compiled together with this project:
 
 - pixi run setup — clones ExecuTorch (with submodules) into third_party/executorch; skipped if already present
 - pixi run config — configures the CMake build

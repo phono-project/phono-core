@@ -4,8 +4,8 @@
 
 Building phono-core requires:
 
-- pixi: creates the unified build environment (provides Python, CMake, Ninja and the C/C++ compiler, and pulls ExecuTorch's Python dependencies).
-- vcpkg: provides the ICU and nlohmann-json C++ dependencies declared in vcpkg.json at the repository root. If ICU is already installed system-wide, CMake can use it directly without vcpkg.
+- pixi: creates the unified build environment (provides Python, CMake, Ninja and the C/C++ compiler, and pulls ExecuTorch's Python dependencies). Python also runs the codegen at CMake configure time, compiling the Traditional->Simplified (zh2Hans) rules into a native C++ table.
+- vcpkg: provides the uni-algo and nlohmann-json C++ dependencies declared in vcpkg.json at the repository root.
 - A network connection: pixi downloads Python packages and pixi run setup clones the ExecuTorch source (with submodules).
 
 ## Common Flow
@@ -46,7 +46,7 @@ pixi run config
 pixi run build
 ```
 
-The pixi linux-64 platform (linux-glibc228) targets glibc 2.28, so the produced binaries run on older distributions. If ICU is missing system-wide, keep VCPKG_ROOT exported and vcpkg will download and build ICU automatically; if system ICU is available and you want to skip vcpkg, override the toolchain file at configure time and let CMake find the system ICU.
+The pixi linux-64 platform (linux-glibc228) targets glibc 2.28, so the produced binaries run on older distributions. Keep VCPKG_ROOT exported and vcpkg will download and build uni-algo automatically; the build also requires Python3 from the pixi environment for the configure-time codegen.
 
 ## macOS
 
@@ -87,6 +87,5 @@ On Windows, CMake defines NOMINMAX and WIN32_LEAN_AND_MEAN to avoid windows.h ma
 ## Troubleshooting
 
 - ExecuTorch clone fails: check the network and proxy settings, delete third_party/executorch and retry pixi run setup.
-- vcpkg builds ICU slowly: the first configure downloads and compiles ICU, which is expected to take a while; run pixi run config early to warm it up.
-- ICU not found: make sure VCPKG_ROOT is exported, or install ICU system-wide (libicu-dev on Linux, icu4c via brew on macOS).
+- zh2Hans codegen fails: make sure pixi run config runs inside the pixi environment (the configure step invokes Python3 to run codegen/zh2hans_codegen.py); reproduce with `python codegen/zh2hans_codegen.py --input res/zh2hans.json --output src/gen/zh2hansdict.h`.
 - Model fails to load: the package must be v2 format (model_format_version is 2 in config.json, and the pre program exposes pre_model_pass1 and pre_model_pass2).
