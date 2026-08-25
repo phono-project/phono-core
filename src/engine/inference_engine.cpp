@@ -290,6 +290,11 @@ InferenceError InferenceEngine::run_post_model(const std::vector<int32_t>& pinyi
     if (pinyin_ids.empty()) {
         return InferenceError::InvalidArgument;
     }
+    // The exported post program has a hard input length baked into the graph;
+    // feeding anything longer is a model error on the caller's part.
+    if (static_cast<int32_t>(pinyin_ids.size()) > config_.post_model.max_seqlen) {
+        return InferenceError::PinyinLimitExceeded;
+    }
     std::vector<int64_t> input_data(pinyin_ids.begin(), pinyin_ids.end());
     auto input = make_tensor_ptr(std::vector<int32_t>{1, static_cast<int32_t>(pinyin_ids.size())},
                                  input_data.data(), ScalarType::Long);
@@ -325,54 +330,30 @@ InferenceError InferenceEngine::run_post_model(const std::vector<int32_t>& pinyi
 }
 
 InferenceSession::InferenceSession(InferenceEngine& engine)
-    : InferenceSession(
-          engine,
-          engine.pre_pass2_batch_size() > 0 ? engine.pre_pass2_batch_size()
-                                            : engine.config().runtime.batch_size) {}
+    : InferenceSession(engine, core::default_core_config(engine.config())) {}
 
-InferenceSession::InferenceSession(InferenceEngine& engine, int32_t beam_size)
-    : engine_(engine), beam_size_(beam_size) {
-    if (beam_size_ <= 0 ||
-        (engine.pre_pass2_batch_size() > 0 && engine.pre_pass2_batch_size() != beam_size_)) {
+InferenceSession::InferenceSession(InferenceEngine& engine, const core::CoreConfig& core_config)
+    : engine_(engine), core_config_(core_config) {
+    if (core_config_.beam_size <= 0) {
+        throw std::invalid_argument("InferenceSession: core_config.beam_size must be positive");
+    }
+    if (engine_.pre_pass2_batch_size() > 0 &&
+        engine_.pre_pass2_batch_size() != core_config_.beam_size) {
         throw std::invalid_argument(
-            "InferenceSession: beam_size must be positive and match pre pass 2");
+            "InferenceSession: core_config.beam_size must match pre pass 2");
     }
     const auto& cfg = engine_.config();
-    self_kv_ = context::make_zero_persistent_tensor(
-        {cfg.pre_model.mhsa_layers, 2, beam_size_, cfg.pre_model.max_seqlen,
-         cfg.pre_model.mhsa_heads, cfg.pre_model.self_head_dim()});
     fill_kv_ = context::make_zero_persistent_tensor(
         {cfg.pre_model.mhsa_layers, 2, 1, cfg.pre_model.max_seqlen,
          cfg.pre_model.mhsa_heads, cfg.pre_model.self_head_dim()});
-    initialize();
 }
 
-InferenceSession::InferenceSession(InferenceEngine& engine, context::Context& context)
-    : engine_(engine), context_(&context), beam_size_(context.self_kv.batch_size()) {
-    if (beam_size_ <= 0 ||
-        (engine.pre_pass2_batch_size() > 0 && engine.pre_pass2_batch_size() != beam_size_)) {
-        throw std::invalid_argument(
-            "InferenceSession: context cache B must match pre pass 2");
-    }
-    const auto& cfg = engine_.config();
-    self_kv_ = context.self_kv;
-    fill_kv_ = context::make_zero_persistent_tensor(
-        {cfg.pre_model.mhsa_layers, 2, 1, cfg.pre_model.max_seqlen,
-         cfg.pre_model.mhsa_heads, cfg.pre_model.self_head_dim()});
-    sync_from_context();
-}
-
-InferenceError InferenceSession::initialize() {
-    return reset();
-}
-
-InferenceError InferenceSession::reset() {
-    self_kv_.zero_();
+InferenceError InferenceSession::reset(context::Context& context) {
+    context.self_kv.zero_();
+    context.truncate_context_ids(0);
+    context.set_current_seqlen(0);
+    context.set_history_seqlen(0);
     fill_kv_.zero_();
-    history_ids_.clear();
-    current_seqlen_ = 0;
-    history_seqlen_ = 0;
-    sync_to_context();
     return InferenceError::Ok;
 }
 
@@ -392,30 +373,54 @@ bool InferenceSession::is_history_prefix(const std::vector<int32_t>& ids) const 
            std::equal(history_ids_.begin(), history_ids_.end(), ids.begin());
 }
 
+int32_t InferenceSession::history_capacity() const {
+    return core_config_.max_history_length;
+}
+
+int32_t InferenceSession::eviction_target() const {
+    return core_config_.max_history_length - core_config_.slack_interval;
+}
+
+InferenceError InferenceSession::truncate_history(int32_t target) {
+    const int32_t current = static_cast<int32_t>(history_ids_.size());
+    if (target < 0 || target >= current) {
+        return InferenceError::InvalidArgument;
+    }
+    const int32_t discarded = current - target;
+    for (int32_t batch = 0; batch < beam_size_; ++batch) {
+        self_kv_.shift_batch_tokens(batch, discarded, target);
+    }
+    fill_kv_.shift_batch_tokens(0, discarded, target);
+    history_ids_.erase(history_ids_.begin(), history_ids_.begin() + discarded);
+    history_seqlen_ = 1 + target;
+    current_seqlen_ = history_seqlen_;
+    return InferenceError::Ok;
+}
+
 InferenceError InferenceSession::fill_incremental(const std::vector<int32_t>& new_ids) {
     if (new_ids.empty()) {
         return InferenceError::Ok;
     }
-    const int32_t capacity = context_capacity();
-    if (new_ids.size() >= static_cast<size_t>(capacity)) {
-        const std::vector<int32_t> tail(
-            new_ids.end() - capacity, new_ids.end());
-        return fill_from_scratch(tail);
-    }
+    const int32_t capacity = history_capacity();
+    const int32_t target = eviction_target();
     const int32_t old_content = static_cast<int32_t>(history_ids_.size());
-    const int32_t overflow = old_content + static_cast<int32_t>(new_ids.size()) - capacity;
-    if (overflow > 0) {
-        if (overflow >= old_content) {
-            const std::vector<int32_t> tail(
-                new_ids.begin() + (overflow - old_content), new_ids.end());
+    const int32_t total = old_content + static_cast<int32_t>(new_ids.size());
+    if (total > capacity) {
+        // The committed history would exceed max_history_length. Evict the
+        // oldest ids down to max_history_length - slack_interval (keeping the
+        // first BOS as the attention sink), then append the new ids.
+        const int32_t keep = target - static_cast<int32_t>(new_ids.size());
+        if (keep <= 0) {
+            const std::vector<int32_t> tail(new_ids.end() - target, new_ids.end());
             return fill_from_scratch(tail);
         }
+        const int32_t discarded = old_content - keep;
         for (int32_t batch = 0; batch < beam_size_; ++batch) {
-            self_kv_.shift_batch_tokens(batch, overflow, old_content - overflow);
+            self_kv_.shift_batch_tokens(batch, discarded, keep);
         }
-        fill_kv_.shift_batch_tokens(0, overflow, old_content - overflow);
-        history_ids_.erase(history_ids_.begin(), history_ids_.begin() + overflow);
-        history_seqlen_ = 1 + static_cast<int32_t>(history_ids_.size());
+        fill_kv_.shift_batch_tokens(0, discarded, keep);
+        history_ids_.erase(history_ids_.begin(), history_ids_.begin() + discarded);
+        history_seqlen_ = 1 + keep;
         current_seqlen_ = history_seqlen_;
     }
 
@@ -449,10 +454,11 @@ InferenceError InferenceSession::fill_incremental(const std::vector<int32_t>& ne
 }
 
 InferenceError InferenceSession::fill_from_scratch(const std::vector<int32_t>& context_ids) {
-    const int32_t capacity = context_capacity();
+    const int32_t capacity = history_capacity();
+    const int32_t target = eviction_target();
     std::vector<int32_t> effective_ids = context_ids;
     if (effective_ids.size() > static_cast<size_t>(capacity)) {
-        effective_ids.erase(effective_ids.begin(), effective_ids.end() - capacity);
+        effective_ids.erase(effective_ids.begin(), effective_ids.end() - target);
     }
     self_kv_.zero_();
     fill_kv_.zero_();
@@ -503,9 +509,10 @@ InferenceError InferenceSession::replace_context_impl(const std::vector<int32_t>
         })) {
         return InferenceError::InvalidArgument;
     }
-    const int32_t capacity = context_capacity();
+    const int32_t capacity = history_capacity();
+    const int32_t target_window = eviction_target();
     if (target.size() > static_cast<size_t>(capacity)) {
-        target.erase(target.begin(), target.end() - capacity);
+        target.erase(target.begin(), target.end() - target_window);
     }
     if (target == history_ids_) {
         current_seqlen_ = history_seqlen_;
@@ -528,14 +535,6 @@ InferenceError InferenceSession::replace_context_impl(const std::vector<int32_t>
     return fill_from_scratch(target);
 }
 
-int32_t InferenceSession::context_capacity() const {
-    int32_t capacity = engine_.config().pre_model.max_seqlen - 1;
-    if (context_ != nullptr) {
-        capacity = std::min(capacity, context_->context_ids_capacity());
-    }
-    return std::max(0, capacity);
-}
-
 InferenceError InferenceSession::fill_impl(const std::vector<int32_t>& new_ids) {
     const std::vector<int32_t> ids = without_bos(new_ids);
     if (std::any_of(ids.begin(), ids.end(), [&](int32_t id) {
@@ -552,37 +551,36 @@ InferenceError InferenceSession::fill_impl(const std::vector<int32_t>& new_ids) 
     return fill_incremental(ids);
 }
 
-InferenceError InferenceSession::fill(const std::vector<int32_t>& new_ids) {
-    sync_from_context();
+InferenceError InferenceSession::fill(context::Context& context,
+                                      const std::vector<int32_t>& new_ids) {
+    sync_from_context(context);
     const InferenceError error = fill_impl(new_ids);
-    sync_to_context();
+    sync_to_context(context);
     return error;
 }
 
-InferenceError InferenceSession::replace_context(const std::vector<int32_t>& context_ids) {
-    sync_from_context();
+InferenceError InferenceSession::replace_context(context::Context& context,
+                                                 const std::vector<int32_t>& context_ids) {
+    sync_from_context(context);
     const InferenceError error = replace_context_impl(context_ids);
-    sync_to_context();
+    sync_to_context(context);
     return error;
 }
 
-bool InferenceSession::cancelled(const std::atomic_bool* cancellation) const {
-    return cancellation != nullptr && cancellation->load(std::memory_order_relaxed);
+bool InferenceSession::cancelled(CancellationFn cancellation, void* user_data) const {
+    return cancellation != nullptr && cancellation(user_data);
 }
 
-void InferenceSession::sync_from_context() {
-    if (context_ == nullptr) {
-        return;
-    }
-    self_kv_ = context_->self_kv;
+void InferenceSession::sync_from_context(context::Context& context) {
+    self_kv_ = context.self_kv;
     beam_size_ = self_kv_.batch_size();
     history_ids_.clear();
-    if (context_->context_ids_len() > 0) {
-        history_ids_.assign(context_->context_ids(),
-                            context_->context_ids() + context_->context_ids_len());
+    if (context.context_ids_len() > 0) {
+        history_ids_.assign(context.context_ids(),
+                            context.context_ids() + context.context_ids_len());
     }
-    current_seqlen_ = context_->current_seqlen();
-    history_seqlen_ = context_->history_seqlen();
+    current_seqlen_ = context.current_seqlen();
+    history_seqlen_ = context.history_seqlen();
     fill_kv_.zero_();
     if (history_seqlen_ > 0) {
         fill_kv_.copy_batch_slice_from(
@@ -590,25 +588,23 @@ void InferenceSession::sync_from_context() {
     }
 }
 
-void InferenceSession::sync_to_context() {
-    if (context_ == nullptr) {
-        return;
-    }
-    if (history_ids_.size() > static_cast<size_t>(context_->context_ids_capacity())) {
+void InferenceSession::sync_to_context(context::Context& context) {
+    if (history_ids_.size() > static_cast<size_t>(context.context_ids_capacity())) {
         throw std::out_of_range("InferenceSession: context slot capacity exceeded");
     }
-    context_->truncate_context_ids(0);
+    context.truncate_context_ids(0);
     if (!history_ids_.empty()) {
-        context_->append_context_ids(history_ids_.data(),
-                                     static_cast<int32_t>(history_ids_.size()));
+        context.append_context_ids(history_ids_.data(),
+                                   static_cast<int32_t>(history_ids_.size()));
     }
-    context_->set_current_seqlen(current_seqlen_);
-    context_->set_history_seqlen(history_seqlen_);
+    context.set_current_seqlen(current_seqlen_);
+    context.set_history_seqlen(history_seqlen_);
 }
 
 GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyin_ids,
                                                const std::vector<int32_t>& context_ids,
-                                               const std::atomic_bool* cancellation) {
+                                               CancellationFn cancellation,
+                                               void* cancellation_user_data) {
     GenerateResult result;
     const auto refresh_state = [&]() {
         result.current_seqlen = current_seqlen_;
@@ -625,6 +621,21 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
         }
     }
     refresh_state();
+
+    // Window the committed history before generation: once it reaches
+    // max_history_length, evict down to max_history_length - slack_interval
+    // (keeping the first BOS as the attention sink) so the incoming pinyin
+    // window still fits below the pre-model cache limit.
+    if (static_cast<int32_t>(history_ids_.size()) >= core_config_.max_history_length) {
+        const InferenceError trunc_error = truncate_history(eviction_target());
+        if (trunc_error != InferenceError::Ok) {
+            result.error = trunc_error;
+            refresh_state();
+            return result;
+        }
+        refresh_state();
+    }
+
     if (pinyin_ids.empty()) {
         result.beams.push_back(BeamResult{0.0, {}, {}});
         return result;
@@ -635,13 +646,23 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
         result.error = InferenceError::InvalidArgument;
         return result;
     }
-    if (cancelled(cancellation)) {
+
+    // Any Cancelled return must leave the context cursors at the committed
+    // history state so an interrupted generation can be retried from a
+    // consistent position (the temporary generation positions are never
+    // committed).
+    const auto rollback_generation_cursor = [&]() {
+        current_seqlen_ = history_seqlen_;
+    };
+    if (cancelled(cancellation, cancellation_user_data)) {
+        rollback_generation_cursor();
         result.error = InferenceError::Cancelled;
+        refresh_state();
         return result;
     }
 
     const auto& cfg = engine_.config();
-    if (static_cast<int32_t>(pinyin_ids.size()) > cfg.post_model.max_seqlen) {
+    if (static_cast<int32_t>(pinyin_ids.size()) > core_config_.max_pinyin_length) {
         result.error = InferenceError::PinyinLimitExceeded;
         return result;
     }
@@ -700,8 +721,10 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
         self_kv_.copy_batch_slice_to_all(0, 0, 1);
     }
     refresh_state();
-    if (cancelled(cancellation)) {
+    if (cancelled(cancellation, cancellation_user_data)) {
+        rollback_generation_cursor();
         result.error = InferenceError::Cancelled;
+        refresh_state();
         return result;
     }
     if (error != InferenceError::Ok) {
@@ -726,7 +749,8 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
     refresh_state();
 
     for (int32_t step = 1; step < static_cast<int32_t>(pinyin_ids.size()); ++step) {
-        if (cancelled(cancellation)) {
+        if (cancelled(cancellation, cancellation_user_data)) {
+            rollback_generation_cursor();
             result.error = InferenceError::Cancelled;
             result.beams = std::move(beams);
             refresh_state();
@@ -739,6 +763,7 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
             input_ids[static_cast<size_t>(beam)] =
                 engine_.tokenizer().chinese_id_to_context_id(chinese_id);
             if (input_ids[static_cast<size_t>(beam)] < 0) {
+                rollback_generation_cursor();
                 result.error = InferenceError::InvalidArgument;
                 refresh_state();
                 return result;
@@ -747,14 +772,15 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
         const int32_t position = has_history ? history_seqlen_ + step - 1 : step;
         std::vector<int32_t> positions(static_cast<size_t>(beam_size_), position);
         error = engine_.run_pre_pass2(input_ids, self_kv_, positions, post, step, decoder);
-        if (cancelled(cancellation)) {
-            current_seqlen_ = position + 1;
+        if (cancelled(cancellation, cancellation_user_data)) {
+            rollback_generation_cursor();
             result.error = InferenceError::Cancelled;
             result.beams = std::move(beams);
             refresh_state();
             return result;
         }
         if (error != InferenceError::Ok) {
+            rollback_generation_cursor();
             result.error = error;
             refresh_state();
             return result;
@@ -777,6 +803,7 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
             }
         }
         if (static_cast<int32_t>(expansions.size()) < beam_size_) {
+            rollback_generation_cursor();
             result.error = InferenceError::NoCandidates;
             refresh_state();
             return result;
@@ -812,12 +839,15 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
     return result;
 }
 
-GenerateResult InferenceSession::generate(const std::vector<int32_t>& pinyin_ids,
+GenerateResult InferenceSession::generate(context::Context& context,
+                                          const std::vector<int32_t>& pinyin_ids,
                                           const std::vector<int32_t>& context_ids,
-                                          const std::atomic_bool* cancellation) {
-    sync_from_context();
-    GenerateResult result = generate_impl(pinyin_ids, context_ids, cancellation);
-    sync_to_context();
+                                          CancellationFn cancellation,
+                                          void* cancellation_user_data) {
+    sync_from_context(context);
+    GenerateResult result = generate_impl(pinyin_ids, context_ids, cancellation,
+                                          cancellation_user_data);
+    sync_to_context(context);
     return result;
 }
 

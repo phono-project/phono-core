@@ -1,6 +1,5 @@
 #pragma once
 
-#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -26,6 +25,12 @@ enum class InferenceError {
 };
 
 const char* inference_error_name(InferenceError error);
+
+// Cooperative cancellation callback. `generate` polls this between model
+// steps; returning true aborts generation. `user_data` is an opaque context
+// pointer passed through unchanged (a thread-safe flag, a signal-handler
+// flag, ...). A null callback means cancellation is never requested.
+using CancellationFn = bool (*)(void* user_data);
 
 struct BeamResult {
     double score = 0.0;
@@ -100,61 +105,78 @@ private:
     int32_t pre_pass2_batch_size_ = 0;
 };
 
+// A stateless inference driver. No context is bound at construction time:
+// every call takes the target context::Context explicitly, so a single
+// session can drive any number of context slots (see ContextManager) and the
+// C-ABI layer can multiplex sessions across slots. All per-conversation state
+// (KV cache, committed ids, cursors) lives in the passed context; the session
+// only keeps the scratch fill cache and the validated core_config limits.
+//
+// A session is not reentrant: use one session per thread.
 class InferenceSession {
 public:
+    // Uses a default core_config derived from the model (see
+    // core::default_core_config).
     explicit InferenceSession(InferenceEngine& engine);
-    InferenceSession(InferenceEngine& engine, int32_t beam_size);
-    InferenceSession(InferenceEngine& engine, context::Context& context);
 
-    // Allocates no per-call cache. The model-configured B dimension is used as
-    // the beam/batch width for the session.
-    InferenceError initialize();
-    InferenceError reset();
+    // Uses an already-validated core_config (see core::parse_core_config).
+    InferenceSession(InferenceEngine& engine, const core::CoreConfig& core_config);
+
+    // Zeroes the context's KV cache and clears its committed ids/cursors.
+    InferenceError reset(context::Context& context);
 
     // Appends newly committed context-vocabulary ids using the strictly
-    // causal pass. A leading BOS is accepted and ignored.
-    InferenceError fill(const std::vector<int32_t>& new_ids);
+    // causal pass. A leading BOS is accepted and ignored. History is windowed
+    // to core_config.max_history_length, evicting the oldest ids down to
+    // max_history_length - slack_interval (BOS retained as the attention
+    // sink) when the cap would be exceeded.
+    InferenceError fill(context::Context& context, const std::vector<int32_t>& new_ids);
 
     // Replaces the full context snapshot. Common prefixes are retained and
     // only the missing suffix is filled; divergent input is rebuilt from BOS.
-    InferenceError replace_context(const std::vector<int32_t>& context_ids);
+    InferenceError replace_context(context::Context& context,
+                                   const std::vector<int32_t>& context_ids);
 
     // Runs autoregressive beam search over pinyin-vocabulary ids. context_ids
     // may be supplied as the full current context; an empty vector uses the
-    // context already filled into this session. The history cache is never
-    // advanced by generation.
-    GenerateResult generate(const std::vector<int32_t>& pinyin_ids,
+    // context already committed in `context`. History longer than
+    // max_history_length is truncated to max_history_length - slack_interval
+    // first, and the pinyin window is capped at max_pinyin_length. On
+    // cancellation the generation cursors are rolled back so the context is
+    // left at its committed history state (the KV cache is not rewound).
+    GenerateResult generate(context::Context& context,
+                            const std::vector<int32_t>& pinyin_ids,
                             const std::vector<int32_t>& context_ids = {},
-                            const std::atomic_bool* cancellation = nullptr);
-    GenerateResult generate(const std::vector<int32_t>& pinyin_ids,
-                            const std::vector<int32_t>& context_ids,
-                            const std::atomic_bool& cancellation) {
-        return generate(pinyin_ids, context_ids, &cancellation);
-    }
+                            CancellationFn cancellation = nullptr,
+                            void* cancellation_user_data = nullptr);
 
-    int32_t current_seqlen() const { return current_seqlen_; }
-    int32_t history_seqlen() const { return history_seqlen_; }
     int32_t beam_size() const { return beam_size_; }
+    const core::CoreConfig& core_config() const { return core_config_; }
 
 private:
     std::vector<int32_t> without_bos(const std::vector<int32_t>& ids) const;
     bool is_history_prefix(const std::vector<int32_t>& ids) const;
     InferenceError fill_incremental(const std::vector<int32_t>& new_ids);
     InferenceError fill_from_scratch(const std::vector<int32_t>& context_ids);
-    bool cancelled(const std::atomic_bool* cancellation) const;
+    bool cancelled(CancellationFn cancellation, void* user_data) const;
     InferenceError fill_impl(const std::vector<int32_t>& new_ids);
     InferenceError replace_context_impl(const std::vector<int32_t>& context_ids);
-    int32_t context_capacity() const;
+    int32_t history_capacity() const;
+    int32_t eviction_target() const;
+    // Left-shifts the committed history down to `target` committed ids,
+    // keeping the first BOS as the attention sink. Updates the KV caches and
+    // the cursors accordingly.
+    InferenceError truncate_history(int32_t target);
     GenerateResult generate_impl(const std::vector<int32_t>& pinyin_ids,
                                  const std::vector<int32_t>& context_ids,
-                                 const std::atomic_bool* cancellation);
-    void sync_from_context();
-    void sync_to_context();
+                                 CancellationFn cancellation, void* cancellation_user_data);
+    void sync_from_context(context::Context& context);
+    void sync_to_context(context::Context& context);
 
     InferenceEngine& engine_;
-    context::Context* context_ = nullptr;
-    context::PersistentTensor self_kv_;
+    core::CoreConfig core_config_;
     context::PersistentTensor fill_kv_;
+    context::PersistentTensor self_kv_;
     std::vector<int32_t> history_ids_;
     int32_t beam_size_ = 1;
     int32_t current_seqlen_ = 0;
