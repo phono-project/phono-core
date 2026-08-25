@@ -48,52 +48,13 @@ void Context::clear() {
     history_seqlen_ = 0;
 }
 
-ContextManager::ContextManager(const core::ModelPackageConfig& cfg, size_t num_contexts)
-    : ContextManager(cfg, num_contexts, nlohmann::json::object()) {}
-
-ContextManager::Params ContextManager::parse_params(const core::ModelPackageConfig& cfg,
-                                                     const nlohmann::json& options) {
-    if (!options.is_object()) {
-        throw std::invalid_argument("ContextManager: options must be a JSON object");
-    }
-
-    Params params;
-    params.beam_size = options.value("beam_size", cfg.runtime.batch_size);
-    params.slack_tokens = options.value("N", params.slack_tokens);
-    params.match_threshold = options.value("T", params.match_threshold);
-    params.max_context_length = options.value("max_context_length", cfg.pre_model.max_seqlen - 1);
-    params.trial_ratio = options.value("trial_ratio", params.trial_ratio);
-    params.decay_alpha = options.value("decay_alpha", params.decay_alpha);
-    params.decay_lambda = options.value("decay_lambda", params.decay_lambda);
-
-    if (params.beam_size <= 0) {
-        throw std::invalid_argument("ContextManager: beam_size must be positive");
-    }
-    if (params.slack_tokens < 0) {
-        throw std::invalid_argument("ContextManager: N must be non-negative");
-    }
-    if (params.match_threshold <= 0) {
-        throw std::invalid_argument("ContextManager: T must be positive");
-    }
-    if (params.max_context_length < 0 || params.max_context_length + 1 > cfg.pre_model.max_seqlen) {
-        throw std::invalid_argument(
-            "ContextManager: max_context_length must fit pre_model.max_seqlen including BOS");
-    }
-    if (!(params.trial_ratio > 0.0 && params.trial_ratio <= 1.0) ||
-        !(params.decay_alpha >= 0.0) || !(params.decay_lambda >= 0.0)) {
-        throw std::invalid_argument(
-            "ContextManager: trial_ratio, decay_alpha, and decay_lambda are invalid");
-    }
-    return params;
-}
-
 ContextManager::ContextManager(const core::ModelPackageConfig& cfg, size_t num_contexts,
-                               const nlohmann::json& options)
-    : cfg_(cfg), params_(parse_params(cfg, options)) {
+                               const core::CoreConfig& core_config)
+    : cfg_(cfg), core_config_(core_config) {
     if (num_contexts == 0) {
         throw std::invalid_argument("ContextManager: num_contexts must be > 0");
     }
-    const int32_t B = params_.beam_size;
+    const int32_t B = core_config_.beam_size;
     const int32_t pre_max = cfg.pre_model.max_seqlen;
     const int32_t n = static_cast<int32_t>(num_contexts);
 
@@ -103,7 +64,7 @@ ContextManager::ContextManager(const core::ModelPackageConfig& cfg, size_t num_c
         {n, cfg.pre_model.mhsa_layers, 2, B, pre_max, cfg.pre_model.mhsa_heads,
          cfg.pre_model.self_head_dim()});
 
-    max_ids_ = static_cast<size_t>(params_.max_context_length);
+    max_ids_ = static_cast<size_t>(core_config_.max_context_length);
     stacked_ids_.assign(num_contexts * max_ids_, 0);
     protected_slots_.assign(num_contexts, false);
     last_access_.assign(num_contexts, std::chrono::steady_clock::now());
@@ -115,7 +76,7 @@ ContextManager::ContextManager(const core::ModelPackageConfig& cfg, size_t num_c
 }
 
 Context ContextManager::make_context(size_t index) {
-    const int32_t B = params_.beam_size;
+    const int32_t B = core_config_.beam_size;
     const int32_t pre_max = cfg_.pre_model.max_seqlen;
     const int64_t pre_layers = cfg_.pre_model.mhsa_layers;
     const int64_t pre_heads = cfg_.pre_model.mhsa_heads;
@@ -172,7 +133,7 @@ const Context* ContextManager::get_context_by_full_matching(
 
 size_t ContextManager::trial_capacity() const {
     const size_t capacity = static_cast<size_t>(std::ceil(
-        static_cast<double>(contexts_.size()) * params_.trial_ratio));
+        static_cast<double>(contexts_.size()) * core_config_.trial_ratio));
     return std::max<size_t>(1, std::min(capacity, contexts_.size()));
 }
 
@@ -181,7 +142,7 @@ double ContextManager::slot_value(size_t index) const {
         std::max<int32_t>(1, contexts_[index].context_ids_len()));
     const double age = std::chrono::duration<double>(  // second
         std::chrono::steady_clock::now() - last_access_[index]).count();
-    return std::pow(length, params_.decay_alpha) * std::exp(-params_.decay_lambda * age);
+    return std::pow(length, core_config_.decay_alpha) * std::exp(-core_config_.decay_lambda * age);
 }
 
 size_t ContextManager::weakest_slot(bool trial_only, size_t excluded) const {
@@ -280,7 +241,7 @@ Context* ContextManager::get_context_auto(const std::vector<int32_t>& token_ids)
                    ctx.context_ids()[offset + common] == target_ids[static_cast<size_t>(common)]) {
                 ++common;
             }
-            if (common >= params_.match_threshold &&
+            if (common >= core_config_.min_accept_context &&
                 (common > best.length || (common == best.length && offset < best.offset))) {
                 best = Match{static_cast<int>(i), offset, common};
             }
@@ -289,18 +250,18 @@ Context* ContextManager::get_context_auto(const std::vector<int32_t>& token_ids)
 
     // Prefer a larger slack shift when it preserves a reusable match. This
     // avoids repeatedly moving one token in a sliding input window.
-    if (params_.slack_tokens > 1 && best.slot >= 0 && best.offset < params_.slack_tokens) {
+    if (core_config_.slack_interval > 1 && best.slot >= 0 && best.offset < core_config_.slack_interval) {
         for (size_t i = 0; i < contexts_.size(); ++i) {
             const Context& ctx = contexts_[i];
             const int32_t slot_len = ctx.context_ids_len();
-            for (int offset = params_.slack_tokens; offset < slot_len; ++offset) {
+            for (int offset = core_config_.slack_interval; offset < slot_len; ++offset) {
                 const int length = std::min(target_len, slot_len - offset);
                 int common = 0;
                 while (common < length &&
                        ctx.context_ids()[offset + common] == target_ids[static_cast<size_t>(common)]) {
                     ++common;
                 }
-                if (common >= params_.match_threshold && common >= best.length) {
+                if (common >= core_config_.min_accept_context && common >= best.length) {
                     best = Match{static_cast<int>(i), offset, common};
                 }
             }

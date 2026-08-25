@@ -83,29 +83,19 @@ class ContextManager {
 public:
     using Slot = Context;
 
-    struct Params {
-        int32_t beam_size = 1;
-        int32_t slack_tokens = 8;    // JSON key: N
-        int32_t match_threshold = 8; // JSON key: T
-        int32_t max_context_length = 127;
-        double trial_ratio = 0.25;
-        double decay_alpha = 0.5;
-        double decay_lambda = 1.0 / 60.0;
-    };
-
     // Allocates the stacked KV caches and the stacked context-ids buffer up
     // front (one contiguous block per kind) and creates `num_contexts`
     // Context objects as views into them. Contexts are persistent and reused
-    // for the manager's whole lifetime.
-    ContextManager(const core::ModelPackageConfig& cfg, size_t num_contexts);
+    // for the manager's whole lifetime. `core_config` must already be
+    // validated against the model (see core::parse_core_config).
     ContextManager(const core::ModelPackageConfig& cfg, size_t num_contexts,
-                   const nlohmann::json& options);
+                   const core::CoreConfig& core_config);
     ContextManager(const ContextManager&) = delete;
     ContextManager& operator=(const ContextManager&) = delete;
 
     size_t num_contexts() const { return contexts_.size(); }
     size_t context_ids_capacity() const { return max_ids_; }
-    const Params& params() const { return params_; }
+    const core::CoreConfig& core_config() const { return core_config_; }
 
     // Retrieval by slot index. Throws std::out_of_range for ids outside
     // [0, num_contexts).
@@ -125,8 +115,6 @@ public:
     const core::ModelPackageConfig& config() const { return cfg_; }
 
 private:
-    static Params parse_params(const core::ModelPackageConfig& cfg,
-                               const nlohmann::json& options);
     Context make_context(size_t index);
     size_t choose_replacement_slot();
     double slot_value(size_t index) const;
@@ -135,7 +123,7 @@ private:
     size_t trial_capacity() const;
 
     core::ModelPackageConfig cfg_;
-    Params params_;
+    core::CoreConfig core_config_;
     PersistentTensor stacked_pre_self_kv_;  // (num_contexts, pre_layers, 2, B, pre_max, ...)
     std::vector<int32_t> stacked_ids_;      // (num_contexts, max_ids) int32
     std::vector<Context> contexts_;         // fixed size, addresses stable after init
