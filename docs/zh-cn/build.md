@@ -18,7 +18,7 @@ pixi run config
 pixi run build
 ```
 
-- setup：将 ExecuTorch（含子模块）克隆到 third_party/executorch，若已存在则跳过。
+- setup：将 ExecuTorch 克隆到 third_party/executorch，并只初始化本工程实际用到的子模块（XNNPACK 后端依赖以及 third-party/flatbuffers、flatcc、json、gflags），不再拉取全部子模块；若已存在则保留并仅修正子模块。
 - config：配置 CMake 构建，等价于 `cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Release $CMAKE_ARGS`。可通过环境变量 CMAKE_ARGS 追加自定义参数。
 - build：增量编译，等价于 `cmake --build build`。
 
@@ -29,6 +29,30 @@ CMake 在未显式指定 CMAKE_TOOLCHAIN_FILE 时会自动读取环境变量 VCP
 - libphono_core.so — C-ABI 共享库
 - streaming_benchmark_demo — C++ API 演示程序
 - streaming_benchmark_demo_capi — C-ABI 演示程序
+
+## 选择性编译（算子/精度裁剪）
+
+PhonoP2C 的 export.py 在导出后会把 ExecuTorch 选择编译清单（每模型一份 + 合并一份）写入
+PhonoP2C/export_output/manifests/。要把 ExecuTorch 内核库裁剪到模型实际用到的算子与精度，
+把清单文件复制到 phono-core 的 ops_config/ 目录后重新配置即可：
+
+```
+cp <PhonoP2C>/export_output/manifests/<tag>_ops.yaml ops_config/
+pixi run config
+pixi run build
+```
+
+- 算子裁剪：EXECUTORCH_SELECT_OPS_LIST 只注册清单中出现的算子，完整 portable_ops_lib 不再参与链接。
+- 精度裁剪：由合并清单生成 selected_op_variants.h，并配合 EXECUTORCH_SELECTIVE_BUILD_DTYPE 只保留实际用到的 dtype 变体。ExecuTorch 官方只支持基于单个 .pte 模型的 dtype 选择编译，这里改为基于多模型合并清单驱动。
+
+相关 CMake 选项：
+
+- PHONO_OPS_CONFIG_DIR（默认 `ops_config/`）：清单读取目录。
+- PHONO_OPS_MANIFESTS：显式指定需要合并的清单文件（分号分隔）；默认取 PHONO_OPS_CONFIG_DIR 下的 `<tag>_ops.yaml` 合并清单，若不存在则合并全部 `*_ops.yaml`。
+- PHONO_DTYPE_SELECTIVE_BUILD（默认 ON）：置为 OFF 则只做算子裁剪。
+- PHONO_USE_INSTALLED_EXECUTORCH、EXECUTORCH_SOURCE_DIR：保持不变。
+
+当 ops_config 中没有清单时，构建自动回退为完整内核库（原有行为）。
 
 ## Linux
 

@@ -102,11 +102,20 @@ The v2 model requires the pre program to expose pre_model_pass1 and pre_model_pa
 
 前置要求：pixi 环境与 vcpkg。uni-algo 与 nlohmann-json 由 vcpkg.json 管理；繁体-简体（zh2Hans）规则在 res/zh2hans.json 中维护，由 pixi 环境里的 Python 在 CMake 配置期 codegen 成原生 C++ 表（codegen/zh2hans_codegen.py）。ExecuTorch 由 pixi 任务拉取源码后随主工程一起编译：
 
-- pixi run setup — 将 ExecuTorch（含子模块）克隆到 third_party/executorch，已存在时跳过
+- pixi run setup — 将 ExecuTorch 克隆到 third_party/executorch，并只初始化本工程实际用到的子模块（XNNPACK 后端依赖 + flatbuffers/flatcc/json/gflags），避免拉取全部子模块；已存在时保留并仅修正子模块
 - pixi run config — 配置 CMake 构建
 - pixi run build — 增量编译
 
 配置阶段可在 CMake 缓存中覆写两个选项：PHONO_USE_INSTALLED_EXECUTORCH 指定使用独立安装的 ExecuTorch（需同时设置 CMAKE_PREFIX_PATH）；EXECUTORCH_SOURCE_DIR 指定 ExecuTorch 源码路径（默认 third_party/executorch）。可执行文件与共享库默认输出到 results/ 目录。
+
+### 选择性编译（算子裁剪）
+
+PhonoP2C 的 export.py 在导出 pre_model.pte / post_model.pte 之后会生成 ExecuTorch 选择编译清单（selected_operators.yaml 格式）：每个模型一份，以及一份合并清单，记录模型实际使用的算子与精度（dtype/dim-order）。把这些清单文件复制到 ops_config/ 目录后重新 `pixi run config && pixi run build`，编译会自动裁剪 ExecuTorch 内核库：
+
+- 算子裁剪：通过 EXECUTORCH_SELECT_OPS_LIST 只注册清单中出现的算子，避免链接完整 portable_ops_lib；
+- 精度裁剪：由合并清单生成 selected_op_variants.h 并配合 EXECUTORCH_SELECTIVE_BUILD_DTYPE 只保留清单中出现的 dtype 变体（ExecuTorch 官方仅支持单个 .pte 模型走 dtype 裁剪，这里改为基于多模型合并清单）。
+
+可调 CMake 选项：PHONO_OPS_CONFIG_DIR（清单目录，默认 ops_config/）、PHONO_OPS_MANIFESTS（手动指定要合并的清单文件，默认取 <tag>_ops.yaml 合并清单）、PHONO_DTYPE_SELECTIVE_BUILD（默认 ON，关闭则只做算子裁剪）。没有清单时自动回退为完整内核库构建。
 
 不同平台的 vcpkg 配置、CMake 生成器与编译工具链有所差异，请参阅 docs/zh-cn/build.md（简体中文）与 docs/en-us/build.md（English）中的分平台说明。其他文档（架构设计、core_config 参考、C-ABI 规范）同样按语言分别维护在 docs/zh-cn 与 docs/en-us 下。
 
@@ -114,11 +123,20 @@ The v2 model requires the pre program to expose pre_model_pass1 and pre_model_pa
 
 Prerequisites: the pixi environment and vcpkg. uni-algo and nlohmann-json are declared in vcpkg.json; the Traditional->Simplified (zh2Hans) rules live in res/zh2hans.json and are compiled into a native C++ table by pixi's Python at CMake configure time (codegen/zh2hans_codegen.py). The pixi task fetches ExecuTorch's source and it is compiled together with this project:
 
-- pixi run setup — clones ExecuTorch (with submodules) into third_party/executorch; skipped if already present
+- pixi run setup — clones ExecuTorch into third_party/executorch and initializes only the submodules this project actually needs (the XNNPACK backend deps plus flatbuffers/flatcc/json/gflags) instead of pulling all of them; skipped/fixed-up when already present
 - pixi run config — configures the CMake build
 - pixi run build — incremental build
 
 At configure time, two CMake cache variables can be overridden: PHONO_USE_INSTALLED_EXECUTORCH selects a separately installed ExecuTorch (set CMAKE_PREFIX_PATH accordingly), and EXECUTORCH_SOURCE_DIR points to the ExecuTorch source (default third_party/executorch). Executables and the shared library are output to results/ by default.
+
+### Selective build (operator pruning)
+
+PhonoP2C's export.py emits ExecuTorch selective-build manifests (selected_operators.yaml format) after exporting pre_model.pte / post_model.pte: one per model plus a merged one, recording exactly which operators and dtypes (dtype/dim-order kernel variants) the models use. Copy the manifests into ops_config/ and re-run `pixi run config && pixi run build` to prune the ExecuTorch kernel library:
+
+- Operator pruning: EXECUTORCH_SELECT_OPS_LIST registers only the operators present in the manifests, so the full portable_ops_lib is never linked.
+- Dtype (precision) pruning: a selected_op_variants.h header is generated from the merged manifest and combined with EXECUTORCH_SELECTIVE_BUILD_DTYPE to keep only the dtype variants actually used. (Upstream ExecuTorch only supports dtype-selective-build from a single .pte model; here it is driven by the multi-model merged manifest instead.)
+
+Tunable CMake options: PHONO_OPS_CONFIG_DIR (manifest directory, default ops_config/), PHONO_OPS_MANIFESTS (explicit manifest list to merge; default picks the <tag>_ops.yaml merged manifest), and PHONO_DTYPE_SELECTIVE_BUILD (default ON; set OFF to do operator pruning only). When no manifest is present the build falls back to the full kernel library.
 
 Because the vcpkg configuration, the CMake generator and the compiler toolchain differ per platform, see docs/en-us/build.md (English) or docs/zh-cn/build.md (简体中文) for platform-specific instructions. The other documentation (architecture, core_config reference, C-ABI specification) is likewise maintained per language under docs/en-us and docs/zh-cn.
 

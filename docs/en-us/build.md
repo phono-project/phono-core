@@ -18,7 +18,7 @@ pixi run config
 pixi run build
 ```
 
-- setup clones ExecuTorch (with submodules) into third_party/executorch; skipped if already present.
+- setup clones ExecuTorch into third_party/executorch and initializes only the submodules phono-core actually needs (the XNNPACK backend deps and third-party/flatbuffers, flatcc, json, gflags) rather than all of them; skipped/fixed-up when already present.
 - config configures the CMake build, equivalent to `cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Release $CMAKE_ARGS`. Extra arguments can be appended through the CMAKE_ARGS environment variable.
 - build performs an incremental build, equivalent to `cmake --build build`.
 
@@ -29,6 +29,40 @@ Build artifacts are output to results/ by default:
 - libphono_core.so — the C-ABI shared library
 - streaming_benchmark_demo — the C++ API demo
 - streaming_benchmark_demo_capi — the C-ABI demo
+
+## Selective build (operator/dtype pruning)
+
+PhonoP2C's export.py writes ExecuTorch selective-build manifests after export
+(one per model + a merged one) into PhonoP2C/export_output/manifests/. To prune
+the ExecuTorch kernel library to exactly what the deployed models use, copy the
+manifests into phono-core's ops_config/ directory and reconfigure:
+
+```
+cp <PhonoP2C>/export_output/manifests/<tag>_ops.yaml ops_config/
+pixi run config
+pixi run build
+```
+
+- Operator pruning: EXECUTORCH_SELECT_OPS_LIST registers only the operators in
+  the manifests; the full portable_ops_lib is not linked.
+- Dtype (precision) pruning: a selected_op_variants.h header is generated from
+  the merged manifest and combined with EXECUTORCH_SELECTIVE_BUILD_DTYPE so
+  portable kernels keep only the dtype variants actually used. Upstream
+  ExecuTorch only supports dtype-selective-build from a single .pte model, so
+  this is driven by the multi-model merged manifest instead.
+
+Relevant CMake options:
+
+- PHONO_OPS_CONFIG_DIR (default `ops_config/`): where manifests are read from.
+- PHONO_OPS_MANIFESTS: explicit, semicolon-separated list of manifest files to
+  merge (default: the `<tag>_ops.yaml` merged manifest in PHONO_OPS_CONFIG_DIR;
+  if none, per-model `*_ops.yaml` files are merged).
+- PHONO_DTYPE_SELECTIVE_BUILD (default ON): set OFF to keep operator pruning
+  only.
+- PHONO_USE_INSTALLED_EXECUTORCH, EXECUTORCH_SOURCE_DIR: unchanged.
+
+When no manifest is present the build automatically falls back to the full
+kernel library (previous behavior).
 
 ## Linux
 
