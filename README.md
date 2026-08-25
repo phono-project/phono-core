@@ -4,48 +4,54 @@
 
 phono-core 是 PhonoP2C 的边缘侧 C++ 推理引擎：在 ExecuTorch 运行时上部署两段式 PostfixLM 拼音转汉字模型，输入「中文上下文 + 拼音音节」，输出汉字候选。它只依赖 ExecuTorch 的 C++ API 与少量系统库，适合部署到移动端或嵌入式设备。
 
-代码按功能划分为 src/core、src/algo、src/context、src/engine 四个子目录，对应 phono::core、phono::algo、phono::context、phono::engine 四个子命名空间，另有一个 src/custom_ops 目录（命名空间 phono::ops）提供 ExecuTorch 自定义算子。其中 src/core 与 src/algo 不依赖 ExecuTorch，是纯逻辑层，可独立测试；src/context 与 src/engine 依赖 ExecuTorch 运行时。
+当前分支为 v2。相比早期的 v1 设计，本分支做了几项重大调整：推理会话改为无状态设计，会话不再在构造时绑定上下文，所有需要上下文的方法都以显式参数传入上下文槽位，便于槽位切换与 C 调用规范的制定；中止语义改为「回调函数 + 上下文指针」的检查形式，generate 通过轮询回调确认中止，并在中断时回滚生成游标（无需回滚 KV 缓存）；上下文窗口引入软上限 max_history_length 与松弛区间 slack_interval，在触发上限之前先把历史截断到上限减去松弛区间的长度，并始终保留第一个 BOS 作为注意力汇点；拼音输入窗口新增 max_pinyin_length 上限，该上限不得高于后段模型的硬性长度限制。
+
+代码按功能划分为 src/core、src/algo、src/context、src/engine 四个子目录，对应 phono::core、phono::algo、phono::context、phono::engine 四个子命名空间，另有 src/custom_ops 目录（命名空间 phono::ops）提供 ExecuTorch 自定义算子。src/core 与 src/algo 不依赖 ExecuTorch，是纯逻辑层，可独立测试；src/context 与 src/engine 依赖 ExecuTorch 运行时。interface 目录实现面向 C-ABI 的调用规范，编译为共享库 libphono_core.so，供 C 语言、Python 绑定、移动端或其他平台直接调用。
 
 ## Introduction
 
 phono-core is the on-device C++ inference engine for PhonoP2C: it deploys the two-stage PostfixLM pinyin-to-Chinese model on the ExecuTorch runtime, taking "Chinese context + pinyin syllables" as input and producing Chinese-character candidates. It depends only on ExecuTorch's C++ API and a few system libraries, making it suitable for mobile or embedded deployment.
 
-The code is organized into four subdirectories — src/core, src/algo, src/context, src/engine — mirrored by the sub-namespaces phono::core, phono::algo, phono::context and phono::engine, plus src/custom_ops (namespace phono::ops) for ExecuTorch custom operators. src/core and src/algo are ExecuTorch-independent pure logic that can be tested in isolation; src/context and src/engine depend on the ExecuTorch runtime.
+The current branch is v2. Compared with the earlier v1 design, this branch makes several significant changes: the inference session is now stateless and never binds a context at construction time, with every context-dependent method taking an explicit context slot as a parameter, which makes slot switching and a stable C ABI straightforward; the cancellation semantics have been redesigned as a callback-plus-context-pointer check that generate polls, and the generation cursors are rolled back on interruption (without rewinding the KV cache); the context window introduces a soft cap max_history_length together with a slack interval slack_interval, truncating history to max_history_length minus slack_interval before the cap is hit while always keeping the first BOS as the attention sink; and the pinyin input window gains a max_pinyin_length cap that must not exceed the post model's hard length limit.
+
+The code is organized into four subdirectories — src/core, src/algo, src/context, src/engine — mirrored by the sub-namespaces phono::core, phono::algo, phono::context and phono::engine, plus src/custom_ops (namespace phono::ops) for ExecuTorch custom operators. src/core and src/algo are ExecuTorch-independent pure logic that can be tested in isolation; src/context and src/engine depend on the ExecuTorch runtime. The interface directory implements the C-ABI call convention and is compiled into the shared library libphono_core.so for direct consumption by C code, Python bindings, mobile or other platforms.
 
 ## 项目结构
 
 - src/core — 与 ExecuTorch 无关的纯逻辑，命名空间 phono::core
-  - config — 加载模型包的 config.json 并校验维度配置
+  - config — 加载模型包的 config.json 并校验维度配置；同时提供运行期 core_config 的解析与校验（解析 core_configs/default.json 中的运行参数，并对照模型硬限制返回错误枚举）
   - tokenizer — 汉字、上下文、拼音三份词表的编码与解码，拼音未命中时按编辑距离回退到最近音节
   - utf8_util — UTF-8 逐字符切分工具
 - src/algo — 与 ExecuTorch 无关的解码算法，命名空间 phono::algo
-  - trie — 词典 Trie 的加载与词匹配，产出 WordMatch 候选
-  - viterbi — 词典约束的 Viterbi N-best 束搜索解码
 - src/context — 流式上下文状态，命名空间 phono::context
   - kv_cache — PersistentTensor：零拷贝的持久缓存缓冲区及其子视图
   - context — Context / ContextManager：B 路 self-KV Cache 视图、token id 序列，以及可复用上下文槽位管理
 - src/engine — 推理引擎，命名空间 phono::engine
-  - inference_engine — InferenceEngine 加载 v2 多方法 pre / post .pte 模块，InferenceSession 提供有状态 fill / generate API
-  - src/custom_ops — ExecuTorch 自定义算子，命名空间 phono::ops：update_mhsa_kv
-- apps — 可执行程序：streaming_benchmark_demo 交互式流式基准
+  - inference_engine — InferenceEngine 加载 v2 多方法 pre / post .pte 模块；InferenceSession 提供无状态 fill / generate API，以显式上下文槽位为参数
+- src/custom_ops — ExecuTorch 自定义算子，命名空间 phono::ops：update_mhsa_kv
+- interface — C-ABI 调用规范（phono_api.h / phono_api.cpp），编译为 libphono_core.so
+- apps — 可执行程序：streaming_benchmark_demo（C++ API 演示）与 streaming_benchmark_demo_capi（C-ABI 演示）
+- tests — 单元测试与模型级测试，由 CTest 驱动
+- docs — 文档（docs/zh-cn 与 docs/en-us 分语言维护）
 - third_party — ExecuTorch 源码，由 pixi 的 setup 任务拉取
 
 ## Project Layout
 
 - src/core — ExecuTorch-independent pure logic, namespace phono::core
-  - config — loads the model package's config.json and validates dimension configs
+  - config — loads the model package's config.json and validates dimension configs; also parses and validates the runtime core_config (from core_configs/default.json) against the model's hard limits, returning an error enum instead of crashing
   - tokenizer — encode/decode for the Chinese, context and pinyin vocabularies; out-of-vocabulary pinyin falls back to the nearest syllable by edit distance
   - utf8_util — UTF-8 per-character splitting utilities
 - src/algo — ExecuTorch-independent decoding algorithms, namespace phono::algo
-  - trie — dictionary-trie loading and word matching, producing WordMatch candidates
-  - viterbi — dictionary-constrained Viterbi N-best beam-search decoding
 - src/context — streaming context state, namespace phono::context
   - kv_cache — PersistentTensor: zero-copy persistent cache buffers and sub-views
   - context — Context / ContextManager: B-wide self-KV-cache views, token-id sequences, and reusable context slots
 - src/engine — inference engine, namespace phono::engine
-  - inference_engine — InferenceEngine loads the v2 multi-method pre/post .pte modules; InferenceSession provides stateful fill/generate APIs
-  - src/custom_ops — ExecuTorch custom operator, namespace phono::ops: update_mhsa_kv
-- apps — executables: streaming_benchmark_demo, an interactive streaming benchmark
+  - inference_engine — InferenceEngine loads the v2 multi-method pre/post .pte modules; InferenceSession provides the stateless fill/generate APIs taking an explicit context slot
+- src/custom_ops — ExecuTorch custom operator, namespace phono::ops: update_mhsa_kv
+- interface — the C-ABI call convention (phono_api.h / phono_api.cpp), compiled into libphono_core.so
+- apps — executables: streaming_benchmark_demo (C++ API demo) and streaming_benchmark_demo_capi (C-ABI demo)
+- tests — unit and model-level tests driven by CTest
+- docs — documentation, maintained separately under docs/zh-cn and docs/en-us
 - third_party — ExecuTorch source, fetched by the pixi setup task
 
 ## 模型包
@@ -53,95 +59,140 @@ The code is organized into four subdirectories — src/core, src/algo, src/conte
 模型包是一个自包含的目录，InferenceEngine 以该目录路径构造：
 
 - config.json — 模型与运行配置，含 common、pre_model、post_model、vocabs、decoding、runtime 六节
-- bins/pre_model.pte — v2 多方法前段解码器（`pre_model_pass1` / `pre_model_pass2`），维护 B 路 self-KV Cache
+- bins/pre_model.pte — v2 多方法前段解码器（pre_model_pass1 / pre_model_pass2），维护 B 路 self-KV Cache
 - bins/post_model.pte — 后段拼音编码器，输出 hidden states 与 logits mask
 - vocabs/chinese_vocab.txt — 汉字词表（预测输出空间）
 - vocabs/context_vocab.txt — 上下文词表（含特殊符号，如 bos_token）
 - vocabs/pinyin_vocab.txt — 拼音音节词表（模型输入）
-- dict/dict_trie.json — 词典 Trie，供 Viterbi 解码使用
-- core_configs/default.json — ContextManager 的 beam、slack、匹配阈值与手动上下文长度配置
+- dict/dict_trie.json — 词典 Trie，供 Viterbi 解码使用（可选）
+- core_configs/default.json — 运行期 core_config：beam、slack_interval、min_accept_context、max_context_length、max_history_length、max_pinyin_length 与槽位淘汰参数
 
-示例使用的模型可以通过 huggingface-cli 下载：
+v2 模型可以通过 huggingface-cli 下载：
+
 ```
-hf download afirelily/phonop2c_v1_0_base_model --local-dir ./phonop2c_v1_0_base_model
+hf download afirelily/phonop2c_v2_0_alpha_05_base_model --local-dir ./phonop2c_v2_0_base_model
 ```
 
-该下载示例是旧版 v1 模型包；v2 引擎要求 pre 包含 `pre_model_pass1` 与 `pre_model_pass2` 方法，并要求 post 方法名为 `post_model`。
+该 v2 模型要求 pre 程序包含 pre_model_pass1 与 pre_model_pass2 两个方法，并要求 post 方法名为 post_model；模型包的 config.json 中 model_format_version 为 2。请勿使用 v1 模型包，v1 包缺少上述方法，无法被 v2 引擎加载。
 
 ## Model Package
 
 A model package is a self-contained directory; InferenceEngine is constructed with its path:
 
 - config.json — model and runtime config, in six sections: common, pre_model, post_model, vocabs, decoding, runtime
-- bins/pre_model.pte — the v2 multi-method decoder (`pre_model_pass1` / `pre_model_pass2`) with a B-wide self-KV cache
+- bins/pre_model.pte — the v2 multi-method decoder (pre_model_pass1 / pre_model_pass2) with a B-wide self-KV cache
 - bins/post_model.pte — the pinyin encoder, returning hidden states and a logits mask
 - vocabs/chinese_vocab.txt — the Chinese-character vocabulary (prediction output space)
 - vocabs/context_vocab.txt — the context vocabulary (including special tokens such as bos_token)
 - vocabs/pinyin_vocab.txt — the pinyin-syllable vocabulary (model input)
-- dict/dict_trie.json — the dictionary trie, used by Viterbi decoding
-- core_configs/default.json — ContextManager beam, slack, match-threshold, and manual context-length settings
+- dict/dict_trie.json — the dictionary trie, used by Viterbi decoding (optional)
+- core_configs/default.json — the runtime core_config: beam, slack_interval, min_accept_context, max_context_length, max_history_length, max_pinyin_length and slot-eviction parameters
 
-The sample model package can be downloaded using huggingface-cli:
+Download the v2 model with huggingface-cli:
+
 ```
-hf download afirelily/phonop2c_v1_0_base_model --local-dir ./phonop2c_v1_0_base_model
+hf download afirelily/phonop2c_v2_0_alpha_05_base_model --local-dir ./phonop2c_v2_0_base_model
 ```
 
-The download example is a legacy v1 package. The v2 engine requires `pre_model_pass1` and `pre_model_pass2` methods in the pre program and a post method named `post_model`.
-
+The v2 model requires the pre program to expose pre_model_pass1 and pre_model_pass2 and the post method to be named post_model; model_format_version is 2 in the package's config.json. Do not use v1 packages — they lack the required methods and cannot be loaded by the v2 engine.
 
 ## 构建与运行
 
-前置要求：pixi 环境与 vcpkg。ICU 和 nlohmann-json 由 `vcpkg.json` 管理；如果系统没有 ICU，请设置 `CMAKE_TOOLCHAIN_FILE` 指向 vcpkg toolchain。ExecuTorch 由 pixi 任务拉取源码后随主工程一起编译：
+前置要求：pixi 环境与 vcpkg。ICU 和 nlohmann-json 由 vcpkg.json 管理；如果系统没有 ICU，请设置 CMAKE_TOOLCHAIN_FILE 指向 vcpkg toolchain。ExecuTorch 由 pixi 任务拉取源码后随主工程一起编译：
 
 - pixi run setup — 将 ExecuTorch（含子模块）克隆到 third_party/executorch，已存在时跳过
 - pixi run config — 配置 CMake 构建
 - pixi run build — 增量编译
 
-配置阶段可在 CMake 缓存中覆写两个选项：PHONO_USE_INSTALLED_EXECUTORCH 指定使用独立安装的 ExecuTorch（需同时设置 CMAKE_PREFIX_PATH）；EXECUTORCH_SOURCE_DIR 指定 ExecuTorch 源码路径（默认 third_party/executorch）。可执行文件默认输出到 results/ 目录。
+配置阶段可在 CMake 缓存中覆写两个选项：PHONO_USE_INSTALLED_EXECUTORCH 指定使用独立安装的 ExecuTorch（需同时设置 CMAKE_PREFIX_PATH）；EXECUTORCH_SOURCE_DIR 指定 ExecuTorch 源码路径（默认 third_party/executorch）。可执行文件与共享库默认输出到 results/ 目录。
+
+不同平台的 vcpkg 配置、CMake 生成器与编译工具链有所差异，请参阅 docs/zh-cn/build.md（简体中文）与 docs/en-us/build.md（English）中的分平台说明。其他文档（架构设计、core_config 参考、C-ABI 规范）同样按语言分别维护在 docs/zh-cn 与 docs/en-us 下。
 
 ## Build & Run
 
-Prerequisites: the pixi environment and vcpkg. ICU and nlohmann-json are declared in `vcpkg.json`; if ICU is not installed system-wide, set `CMAKE_TOOLCHAIN_FILE` to the vcpkg toolchain. The pixi task fetches ExecuTorch's source and it is compiled together with this project:
+Prerequisites: the pixi environment and vcpkg. ICU and nlohmann-json are declared in vcpkg.json; if ICU is not installed system-wide, set CMAKE_TOOLCHAIN_FILE to the vcpkg toolchain. The pixi task fetches ExecuTorch's source and it is compiled together with this project:
 
 - pixi run setup — clones ExecuTorch (with submodules) into third_party/executorch; skipped if already present
 - pixi run config — configures the CMake build
 - pixi run build — incremental build
 
-At configure time, two CMake cache variables can be overridden: PHONO_USE_INSTALLED_EXECUTORCH selects a separately installed ExecuTorch (set CMAKE_PREFIX_PATH accordingly), and EXECUTORCH_SOURCE_DIR points to the ExecuTorch source (default third_party/executorch). Executables are output to results/ by default.
+At configure time, two CMake cache variables can be overridden: PHONO_USE_INSTALLED_EXECUTORCH selects a separately installed ExecuTorch (set CMAKE_PREFIX_PATH accordingly), and EXECUTORCH_SOURCE_DIR points to the ExecuTorch source (default third_party/executorch). Executables and the shared library are output to results/ by default.
+
+Because the vcpkg configuration, the CMake generator and the compiler toolchain differ per platform, see docs/en-us/build.md (English) or docs/zh-cn/build.md (简体中文) for platform-specific instructions. The other documentation (architecture, core_config reference, C-ABI specification) is likewise maintained per language under docs/en-us and docs/zh-cn.
 
 ## 使用
 
-下载模型之后，运行基准 demo：
+下载模型之后，运行演示程序（C++ API 版）：
+
 ```
-results/streaming_benchmark_demo phonop2c_v1_0_base_model
+results/streaming_benchmark_demo phonop2c_v2_0_base_model
 ```
 
-程序从 stdin 读取一行空格分隔的拼音窗口，例如 ni hao。每个窗口通过 `InferenceSession::generate` 执行 B 路 beam search；提交候选后下一次 `fill` 只对新增的严格因果历史做增量预填充。上下文达到 hard model limit 或收到取消信号时返回状态码并结束。
+或 C-ABI 版：
+
+```
+results/streaming_benchmark_demo_capi phonop2c_v2_0_base_model
+```
+
+程序从 stdin 读取一行空格分隔的拼音窗口，例如 ni hao。每个窗口通过 InferenceSession::generate 执行 B 路 beam search；提交候选后下一次 fill 只对新增的严格因果历史做增量预填充。core_config 由程序从模型包的 core_configs/default.json 加载，也支持以第二个命令行参数传入自定义的 JSON 文件；当参数不符合模型限制（例如 beam 或上下文最大长度超出模型极限）时，程序打印错误枚举代码并退出。
 
 ## Usage
 
-Run the benchmark demo after downloading the model:
+Run the demo after downloading the model. The C++ API version:
+
 ```
-results/streaming_benchmark_demo phonop2c_v1_0_base_model
+results/streaming_benchmark_demo phonop2c_v2_0_base_model
 ```
 
-The program reads one space-separated pinyin window per line from stdin, e.g. ni hao. Each window uses `InferenceSession::generate` for B-way beam search; after a candidate is committed, the next `fill` incrementally pre-fills only the new strictly-causal history. Context and cancellation limits are returned as status codes.
+or the C-ABI version:
+
+```
+results/streaming_benchmark_demo_capi phonop2c_v2_0_base_model
+```
+
+The program reads one space-separated pinyin window per line from stdin, e.g. ni hao. Each window uses InferenceSession::generate for B-way beam search; after a candidate is committed, the next fill incrementally pre-fills only the new strictly-causal history. The core_config is loaded from the package's core_configs/default.json, and a custom JSON file can be passed as the second command-line argument; when a parameter does not fit the model (for example the beam or the context length exceeds a model limit), the program prints the error enum code and exits.
 
 ## 流式推理设计
 
-InferenceSession 是无状态的：所有会话状态都保存在传入的 Context 中，因此一个 session 可以驱动多个上下文。每个 Context 持有三样东西：KV Cache 的 PersistentTensor 视图、已提交文本的 token id 序列、以及游标 current_position（即下一次写入的缓存位置）。
+InferenceSession 是无状态的：会话状态不保存在会话内部，而是显式地保存在调用方传入的上下文槽位中，因此一个会话可以驱动多个上下文，也便于在多个槽位之间切换。每个上下文槽位持有三样东西：KV Cache 的 PersistentTensor 视图、已提交文本的 token id 序列、以及游标 current_seqlen（下一次写入的缓存位置）。
 
-- `fill` 在历史未改变时复用 cache；历史追加时只运行新增区间，并将 beam 0 的新 slice 复制到其他 beam。
-- `generate` 只读取严格因果历史和当前生成的临时 cross-attention cache；生成期间不改变 `history_seqlen`。
-- ContextManager 用 JSON 配置 B、slack `N`、匹配阈值 `T` 与 `max_context_length`，支持前缀复用、BOS 保护的左移窗口复用和直接重算。
+- fill 在历史未改变时复用缓存；历史追加时只运行新增区间，并将 beam 0 的新切片复制到其他 beam。历史长度受 max_history_length 软上限约束，一旦超出便截断到 max_history_length - slack_interval（保留第一个 BOS 作为注意力汇点）。
+- generate 只读取严格因果历史和当前生成的临时 cross-attention 缓存；生成期间不改变 history_seqlen，只推进 current_seqlen。generate 之前若历史达到 max_history_length，先按相同规则截断；拼音窗口长度受 max_pinyin_length 约束。
+- 中止通过「回调函数 + 上下文指针」检查：generate 在每一步之间轮询回调，回调返回真时中止并回滚游标（current_seqlen 恢复到 history_seqlen），下一次 generate 可以从已提交的历史继续。
+- ContextManager 用 core_config 配置 beam、slack_interval、min_accept_context、max_context_length、max_history_length、max_pinyin_length 与槽位淘汰参数，支持前缀复用、BOS 保护的左移窗口复用和直接重算。
+
+详细的架构说明见 docs/zh-cn/architecture.md。
 
 ## Streaming Inference Design
 
-InferenceSession is stateless: all per-conversation state lives in the Context passed in, so one session can drive many contexts. Each Context holds three things: PersistentTensor views into the KV caches, the token-id sequence of the committed text, and the cursor current_position (the cache write position for the next step).
+InferenceSession is stateless: per-conversation state lives in the context slot passed explicitly by the caller, so one session can drive many contexts and switch freely between slots. Each context slot holds three things: PersistentTensor views into the KV caches, the token-id sequence of the committed text, and the cursor current_seqlen (the cache write position for the next step).
 
-- `fill` reuses unchanged history; when history is appended it runs only the new range and copies beam zero's new slice to the other beams.
-- `generate` reads strictly-causal history plus the temporary cross-attention generation cache and never changes `history_seqlen`.
-- ContextManager takes JSON configuration for beam width, slack `N`, match threshold `T`, and `max_context_length`, supporting prefix reuse, BOS-protected left-shift reuse, and direct recalculation.
+- fill reuses unchanged history; when history is appended it runs only the new range and copies beam zero's new slice to the other beams. History is capped by the soft limit max_history_length; once exceeded it is truncated to max_history_length minus slack_interval, keeping the first BOS as the attention sink.
+- generate reads strictly-causal history plus the temporary cross-attention generation cache and never changes history_seqlen during generation, only advancing current_seqlen. Before generating, if the history has reached max_history_length it is truncated with the same rule, and the pinyin window is capped at max_pinyin_length.
+- Cancellation is a callback-plus-context-pointer check: generate polls the callback between steps, and when it returns true generation aborts and the cursors are rolled back (current_seqlen is restored to history_seqlen), so the next generate can resume from the committed history.
+- ContextManager takes beam, slack_interval, min_accept_context, max_context_length, max_history_length, max_pinyin_length and slot-eviction parameters from the core_config, supporting prefix reuse, BOS-protected left-shift reuse and direct recalculation.
+
+See docs/en-us/architecture.md for the full design.
+
+## 测试
+
+构建后执行 ctest：
+
+```
+ctest --test-dir build --output-on-failure
+```
+
+测试集包含三组：phono_core_tests（tokenizer、KV 缓存切片、上下文槽位复用、core_config 解析与校验）、phono_capi_tests（C-ABI 错误码表面，无需模型）、phono_engine_tests（模型级会话测试：取消回滚、拼音上限、历史窗口截断）。phono_engine_tests 需要设置 PHONO_TEST_MODEL_DIR 指向 v2 模型包目录才会真正执行，未设置时自动跳过。
+
+## Testing
+
+After building, run CTest:
+
+```
+ctest --test-dir build --output-on-failure
+```
+
+The suite has three test groups: phono_core_tests (tokenizer, KV-cache slicing, context slot reuse, core_config parsing and validation), phono_capi_tests (C-ABI error-code surfaces, no model required) and phono_engine_tests (model-level session tests: cancellation rollback, pinyin limit, history windowing). phono_engine_tests only runs when PHONO_TEST_MODEL_DIR points to a v2 model package directory; otherwise it is skipped.
 
 ## 许可证与最终声明
 
