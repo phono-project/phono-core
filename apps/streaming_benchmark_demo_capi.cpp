@@ -105,17 +105,9 @@ private:
     std::string pending_;
 };
 
-std::vector<std::string> split_whitespace(const std::string& line) {
-    std::vector<std::string> words;
-    std::istringstream stream(line);
-    std::string word;
-    while (stream >> word) words.push_back(word);
-    return words;
-}
-
-std::string join(const std::vector<std::string>& words, const std::string& separator = ", ") {
+std::string join(char* const* words, int32_t count, const std::string& separator = ", ") {
     std::string result;
-    for (size_t i = 0; i < words.size(); ++i) {
+    for (int32_t i = 0; i < count; ++i) {
         if (i > 0) result += separator;
         result += words[i];
     }
@@ -174,8 +166,8 @@ int main(int argc, char** argv) {
               << "  pre_model.max_seqlen = " << phono_engine_pre_max_seqlen(engine) << '\n'
               << "  post_model.max_seqlen = " << phono_engine_post_max_seqlen(engine) << '\n';
     print_separator();
-    std::cout << "Type space-separated pinyin (e.g. 'ni hao'), then pick a candidate."
-              << " Press Ctrl-C to stop.\n";
+    std::cout << "Type pinyin (e.g. 'nihao'); use ' to force syllable boundaries."
+               << " Press Ctrl-C to stop.\n";
     print_separator();
 
     LineReader reader;
@@ -189,20 +181,30 @@ int main(int argc, char** argv) {
         std::cout << "pinyin> " << std::flush;
         std::string line;
         if (reader.next(line) != ReadStatus::Ok) break;
-        const std::vector<std::string> pinyin = split_whitespace(line);
-        if (pinyin.empty()) continue;
+        if (line.empty()) continue;
 
-        std::vector<const char*> syllable_ptrs;
-        syllable_ptrs.reserve(pinyin.size());
-        for (const auto& syllable : pinyin) syllable_ptrs.push_back(syllable.c_str());
+        char** syllables = nullptr;
+        int32_t syllable_count = 0;
+        status = phono_tokenizer_separate_greedy(engine, line.c_str(), &syllables,
+                                                 &syllable_count);
+        if (status != PHONO_OK) {
+            std::cout << "  ! pinyin separation failed: " << phono_error_name(status) << '\n';
+            exit_code = exit_for_status(status);
+            break;
+        }
+        if (syllable_count == 0) {
+            phono_free(syllables);
+            continue;
+        }
+
         int32_t* pinyin_ids = nullptr;
         int32_t pinyin_count = 0;
-        status = phono_tokenizer_encode_pinyin(engine, syllable_ptrs.data(),
-                                               static_cast<int32_t>(pinyin.size()),
+        status = phono_tokenizer_encode_pinyin(engine, syllables, syllable_count,
                                                &pinyin_ids, &pinyin_count);
         if (status != PHONO_OK) {
             std::cout << "  ! pinyin encoding failed: " << phono_error_name(status) << '\n';
             exit_code = exit_for_status(status);
+            phono_free(syllables);
             break;
         }
         int32_t* context_ids = nullptr;
@@ -212,6 +214,8 @@ int main(int argc, char** argv) {
         if (status != PHONO_OK) {
             std::cout << "  ! context encoding failed: " << phono_error_name(status) << '\n';
             exit_code = exit_for_status(status);
+            phono_free(syllables);
+            phono_free(pinyin_ids);
             break;
         }
 
@@ -234,14 +238,16 @@ int main(int argc, char** argv) {
             if (status != PHONO_CANCELLED) {
                 exit_code = exit_for_status(status);
             }
+            phono_free(syllables);
             phono_generate_result_free(&result);
             break;
         }
         ++window_count;
         std::cout << "  context: \"" << committed_text << "\"\n"
-                  << "  pinyin : [" << join(pinyin) << "]\n"
+                  << "  pinyin : [" << join(syllables, syllable_count) << "]\n"
                   << "  candidates (" << std::fixed << std::setprecision(1) << elapsed_us
                   << " us):\n";
+        phono_free(syllables);
         for (int32_t i = 0; i < result.beam_count; ++i) {
             std::cout << "    [" << i + 1 << "] score=" << std::setprecision(4)
                       << result.beams[i].score << " \"" << result.beams[i].decoded << "\"\n";

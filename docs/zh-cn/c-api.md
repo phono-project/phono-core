@@ -10,7 +10,7 @@
 2. phono_context_manager_create 传入 core_config 的 JSON 字符串与槽位数量，得到上下文管理器句柄；
 3. phono_context_manager_get_auto 或 phono_context_manager_get_by_id 取得上下文槽位句柄；
 4. phono_session_create 传入同一份 core_config 的 JSON 字符串，得到会话句柄（会话不绑定槽位）；
-5. 循环调用 phono_tokenizer_encode_pinyin 编码拼音、phono_session_generate 生成候选、phono_generate_result_free 释放结果、phono_session_fill 提交候选；
+5. 循环调用 phono_tokenizer_separate_greedy 切分原始拼音、phono_tokenizer_encode_pinyin 编码拼音、phono_session_generate 生成候选、phono_generate_result_free 释放结果、phono_session_fill 提交候选；
 6. 结束后依次释放会话、管理器与引擎。
 
 ## 错误码
@@ -58,14 +58,15 @@ int my_cancel(void* user_data) {
 ## 内存所有权
 
 - 编码接口（phono_tokenizer_encode_context、phono_tokenizer_encode_pinyin）输出的 id 数组由调用方负责用 phono_free 释放；
+- phono_tokenizer_separate_greedy 返回的音节数组是单块连续内存，调用一次 phono_free 即可释放；
 - phono_tokenizer_decode 返回的字符串由调用方用 phono_free 释放；
 - phono_session_generate 填充的 phono_generate_result 内部（beams、pred_ids、decoded）由 phono_generate_result_free 整体释放；
 - 句柄分别由对应的 destroy 函数释放：phono_engine_destroy、phono_context_manager_destroy、phono_session_destroy。
 
 ## 完整函数列表
 
-见 interface/phono_api.h 中的声明与注释，包括：phono_engine_create/destroy、phono_engine_pre_max_seqlen、phono_engine_post_max_seqlen、phono_engine_beam_size、phono_tokenizer_encode_context、phono_tokenizer_encode_pinyin、phono_tokenizer_decode、phono_tokenizer_chinese_to_context、phono_context_manager_create/destroy/num_contexts/get_by_id/get_auto、phono_context_ids_len、phono_context_current_seqlen、phono_context_history_seqlen、phono_session_create/destroy/beam_size/reset/fill/replace_context/generate、phono_generate_result_free、phono_free、phono_error_name、phono_last_error_message。
+见 interface/phono_api.h 中的声明与注释，包括：phono_engine_create/destroy、phono_engine_pre_max_seqlen、phono_engine_post_max_seqlen、phono_engine_beam_size、phono_tokenizer_separate_greedy、phono_tokenizer_encode_context、phono_tokenizer_encode_pinyin、phono_tokenizer_decode、phono_tokenizer_chinese_to_context、phono_context_manager_create/destroy/num_contexts/get_by_id/get_auto、phono_context_ids_len、phono_context_current_seqlen、phono_context_history_seqlen、phono_session_create/destroy/beam_size/reset/fill/replace_context/generate、phono_generate_result_free、phono_free、phono_error_name、phono_last_error_message。
 
 ## 演示程序
 
-streaming_benchmark_demo_capi 是使用该 C 调用规范的完整示例：读取一行空格分隔的拼音，生成候选并选择提交。它的源码位于 apps/streaming_benchmark_demo_capi.cpp。
+streaming_benchmark_demo_capi 是使用该 C 调用规范的完整示例：自动切分一行原始拼音，生成候选并选择提交。它的源码位于 apps/streaming_benchmark_demo_capi.cpp。

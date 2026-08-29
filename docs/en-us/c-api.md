@@ -10,7 +10,7 @@ A typical call sequence is:
 2. phono_context_manager_create takes the core_config JSON string and the number of slots, returning a context-manager handle;
 3. phono_context_manager_get_auto or phono_context_manager_get_by_id returns a context-slot handle;
 4. phono_session_create takes the same core_config JSON string and returns a session handle (the session does not bind a slot);
-5. loop: phono_tokenizer_encode_pinyin encodes the pinyin, phono_session_generate produces candidates, phono_generate_result_free releases the result, and phono_session_fill commits the chosen candidate;
+5. loop: phono_tokenizer_separate_greedy segments raw pinyin, phono_tokenizer_encode_pinyin encodes it, phono_session_generate produces candidates, phono_generate_result_free releases the result, and phono_session_fill commits the chosen candidate;
 6. release the session, the manager and the engine in order when done.
 
 ## Status Codes
@@ -58,14 +58,15 @@ int my_cancel(void* user_data) {
 ## Memory Ownership
 
 - The id arrays returned by the encoding functions (phono_tokenizer_encode_context, phono_tokenizer_encode_pinyin) are owned by the caller and released with phono_free;
+- the syllable array returned by phono_tokenizer_separate_greedy is one contiguous allocation and is released with one phono_free call;
 - the string returned by phono_tokenizer_decode is released with phono_free;
 - the internals of phono_generate_result (beams, pred_ids, decoded) filled by phono_session_generate are released together by phono_generate_result_free;
 - the handles are released by their matching destroy functions: phono_engine_destroy, phono_context_manager_destroy and phono_session_destroy.
 
 ## Full Function List
 
-See the declarations and comments in interface/phono_api.h, including phono_engine_create/destroy, phono_engine_pre_max_seqlen, phono_engine_post_max_seqlen, phono_engine_beam_size, phono_tokenizer_encode_context, phono_tokenizer_encode_pinyin, phono_tokenizer_decode, phono_tokenizer_chinese_to_context, phono_context_manager_create/destroy/num_contexts/get_by_id/get_auto, phono_context_ids_len, phono_context_current_seqlen, phono_context_history_seqlen, phono_session_create/destroy/beam_size/reset/fill/replace_context/generate, phono_generate_result_free, phono_free, phono_error_name and phono_last_error_message.
+See the declarations and comments in interface/phono_api.h, including phono_engine_create/destroy, phono_engine_pre_max_seqlen, phono_engine_post_max_seqlen, phono_engine_beam_size, phono_tokenizer_separate_greedy, phono_tokenizer_encode_context, phono_tokenizer_encode_pinyin, phono_tokenizer_decode, phono_tokenizer_chinese_to_context, phono_context_manager_create/destroy/num_contexts/get_by_id/get_auto, phono_context_ids_len, phono_context_current_seqlen, phono_context_history_seqlen, phono_session_create/destroy/beam_size/reset/fill/replace_context/generate, phono_generate_result_free, phono_free, phono_error_name and phono_last_error_message.
 
 ## Demo
 
-streaming_benchmark_demo_capi is a complete example of using this C call convention: it reads a space-separated pinyin line, generates candidates and commits the chosen one. Its source is in apps/streaming_benchmark_demo_capi.cpp.
+streaming_benchmark_demo_capi is a complete example of using this C call convention: it segments a raw pinyin line, generates candidates and commits the chosen one. Its source is in apps/streaming_benchmark_demo_capi.cpp.

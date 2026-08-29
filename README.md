@@ -148,7 +148,7 @@ Because the vcpkg configuration, the CMake generator and the compiler toolchain 
 results/streaming_benchmark_demo_capi phonop2c_v2_0_base_model
 ```
 
-程序从 stdin 读取一行空格分隔的拼音窗口，例如 ni hao。每个窗口通过 InferenceSession::generate 执行 B 路 beam search；提交候选后下一次 fill 只对新增的严格因果历史做增量预填充。core_config 由程序从模型包的 core_configs/default.json 加载，也支持以第二个命令行参数传入自定义的 JSON 文件；当参数不符合模型限制（例如 beam 或上下文最大长度超出模型极限）时，程序打印错误枚举代码并退出。
+程序从 stdin 读取一行连续拼音窗口，例如 nihao，并通过 phono_tokenizer_separate_greedy 自动切分；可使用单引号显式提示边界，例如 ni'hao。每个窗口通过 InferenceSession::generate 执行 B 路 beam search；提交候选后下一次 fill 只对新增的严格因果历史做增量预填充。core_config 由程序从模型包的 core_configs/default.json 加载，也支持以第二个命令行参数传入自定义的 JSON 文件；当参数不符合模型限制（例如 beam 或上下文最大长度超出模型极限）时，程序打印错误枚举代码并退出。
 
 ## Usage
 
@@ -158,7 +158,7 @@ Run the C-ABI demo after downloading the model:
 results/streaming_benchmark_demo_capi phonop2c_v2_0_base_model
 ```
 
-The program reads one space-separated pinyin window per line from stdin, e.g. ni hao. Each window uses InferenceSession::generate for B-way beam search; after a candidate is committed, the next fill incrementally pre-fills only the new strictly-causal history. The core_config is loaded from the package's core_configs/default.json, and a custom JSON file can be passed as the second command-line argument; when a parameter does not fit the model (for example the beam or the context length exceeds a model limit), the program prints the error enum code and exits.
+The program reads one unseparated pinyin window per line from stdin, e.g. nihao, and segments it with phono_tokenizer_separate_greedy; use a single quote to explicitly hint a boundary, e.g. ni'hao. Each window uses InferenceSession::generate for B-way beam search; after a candidate is committed, the next fill incrementally pre-fills only the new strictly-causal history. The core_config is loaded from the package's core_configs/default.json, and a custom JSON file can be passed as the second command-line argument; when a parameter does not fit the model (for example the beam or the context length exceeds a model limit), the program prints the error enum code and exits.
 
 ## 流式推理设计
 
