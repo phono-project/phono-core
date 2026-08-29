@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "core/config.hpp"
+#include "core/text_normalizer.hpp"
 #include "core/utf8_util.hpp"
 
 namespace phono::core {
@@ -65,6 +66,7 @@ Tokenizer::Tokenizer(const std::string& chinese_vocab_path, const std::string& c
             if (pinyin_vocab_.find(py) == pinyin_vocab_.end()) {
                 pinyin_vocab_.emplace(py, idx);
                 pinyin_list_.push_back(py);
+                pinyin_tree_.insert(py);
                 ++idx;
             }
         }
@@ -102,7 +104,8 @@ int32_t Tokenizer::special_token_id(const std::string& name) const {
 
 std::vector<int32_t> Tokenizer::encode_context(const std::string& text_utf8) const {
     std::vector<int32_t> ids;
-    for (const auto& ch : utf8_split_chars(text_utf8)) {
+    const std::string normalized = normalize_text_utf8(text_utf8);
+    for (const auto& ch : utf8_split_chars(normalized)) {
         auto it = context_vocab_.find(ch);
         if (it != context_vocab_.end()) {
             ids.push_back(it->second);
@@ -157,6 +160,26 @@ std::vector<int32_t> Tokenizer::encode_pinyin(const std::vector<std::string>& pi
     return ids;
 }
 
+std::vector<std::string> Tokenizer::separate_greedy(const std::string& pinyin) const {
+    std::vector<std::string> syllables;
+    size_t position = 0;
+    while (position < pinyin.size()) {
+        if (pinyin[position] == '\'') {
+            ++position;
+            continue;
+        }
+
+        const size_t breakpoint = pinyin.find('\'', position);
+        const size_t segment_end = breakpoint == std::string::npos ? pinyin.size() : breakpoint;
+        const size_t match_length = pinyin_tree_.longest_match(
+            std::string_view(pinyin.data(), segment_end), position);
+        const size_t token_length = match_length == 0 ? 1 : match_length;
+        syllables.emplace_back(pinyin.substr(position, token_length));
+        position += token_length;
+    }
+    return syllables;
+}
+
 std::string Tokenizer::ids_to_text(const std::vector<int32_t>& ids) const {
     std::string out;
     for (int32_t id : ids) {
@@ -171,6 +194,15 @@ std::string Tokenizer::ids_to_text(const std::vector<int32_t>& ids) const {
 std::string Tokenizer::id_to_chinese(int32_t id) const {
     auto it = id_to_chinese_.find(id);
     return it != id_to_chinese_.end() ? it->second : std::string();
+}
+
+int32_t Tokenizer::chinese_id_to_context_id(int32_t id) const {
+    const std::string chinese = id_to_chinese(id);
+    if (chinese.empty()) {
+        return -1;
+    }
+    auto it = context_vocab_.find(chinese);
+    return it != context_vocab_.end() ? it->second : -1;
 }
 
 }  // namespace phono::core

@@ -1,71 +1,51 @@
 #include "trie.hpp"
 
-#include <cmath>
-#include <fstream>
-#include <stdexcept>
-
 namespace phono::algo {
 
-nlohmann::json load_trie(const std::string& path) {
-    std::ifstream in(path);
-    if (!in.is_open()) {
-        throw std::runtime_error("load_trie: cannot open " + path);
+void Trie::insert(std::string_view word) {
+    Node* node = &root_;
+    for (const char ch : word) {
+        auto& child = node->children[ch];
+        if (!child) {
+            child = std::make_unique<Node>();
+        }
+        node = child.get();
     }
-    nlohmann::json trie;
-    in >> trie;
-    return trie;
+    if (!word.empty()) {
+        node->terminal = true;
+    }
 }
 
-namespace {
-
-struct StackEntry {
-    const nlohmann::json* node;
-    int pos;
-    int depth;
-    std::string chars;
-    double log_prob;
-};
-
-}  // namespace
-
-std::vector<WordMatch> find_matching_words(const nlohmann::json& trie,
-                                            const std::vector<std::unordered_map<std::string, double>>& candidates,
-                                            int start) {
-    std::vector<WordMatch> results;
-    std::vector<StackEntry> stack;
-    stack.reserve(256);
-    stack.push_back(StackEntry{&trie, start, 0, std::string(), 0.0});
-
-    while (!stack.empty()) {
-        StackEntry entry = std::move(stack.back());
-        stack.pop_back();
-
-        if (entry.pos < 0 || static_cast<size_t>(entry.pos) >= candidates.size()) {
-            continue;
+bool Trie::contains(std::string_view word) const {
+    const Node* node = &root_;
+    for (const char ch : word) {
+        const auto it = node->children.find(ch);
+        if (it == node->children.end()) {
+            return false;
         }
-        if (!entry.node->is_object()) {
-            continue;
-        }
+        node = it->second.get();
+    }
+    return !word.empty() && node->terminal;
+}
 
-        const auto& cand_dict = candidates[static_cast<size_t>(entry.pos)];
-
-        for (const auto& [ch, prob] : cand_dict) {
-            if (prob <= 0.0) continue;
-            if (!entry.node->contains(ch)) continue;
-
-            std::string new_chars = entry.chars + ch;
-            int new_depth = entry.depth + 1;
-            double new_log_prob = entry.log_prob + std::log(prob);
-
-            const nlohmann::json& child = (*entry.node)[ch];
-            if (child.is_object() && child.contains("#")) {
-                results.push_back(WordMatch{new_depth, new_chars, new_log_prob});
-            }
-            stack.push_back(StackEntry{&child, entry.pos + 1, new_depth, new_chars, new_log_prob});
-        }
+size_t Trie::longest_match(std::string_view text, size_t offset) const {
+    if (offset >= text.size()) {
+        return 0;
     }
 
-    return results;
+    const Node* node = &root_;
+    size_t longest = 0;
+    for (size_t i = offset; i < text.size(); ++i) {
+        const auto it = node->children.find(text[i]);
+        if (it == node->children.end()) {
+            break;
+        }
+        node = it->second.get();
+        if (node->terminal) {
+            longest = i - offset + 1;
+        }
+    }
+    return longest;
 }
 
 }  // namespace phono::algo
