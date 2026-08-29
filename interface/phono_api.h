@@ -81,6 +81,12 @@ PHONO_API int32_t phono_engine_beam_size(const phono_engine* engine);
 // ------ tokenizer ------
 // Output arrays are malloc-allocated and owned by the caller (free with
 // phono_free). Decoded strings are malloc-allocated too.
+// The separated syllable strings and their pointer array occupy one allocation;
+// call phono_free once on the returned array, not on individual strings.
+PHONO_API phono_status phono_tokenizer_separate_greedy(const phono_engine* engine,
+                                                       const char* pinyin,
+                                                       char*** out_syllables,
+                                                       int32_t* out_count);
 PHONO_API phono_status phono_tokenizer_encode_context(const phono_engine* engine,
                                                       const char* text_utf8,
                                                       int32_t** out_ids,

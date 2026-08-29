@@ -73,6 +73,19 @@ void test_core_config_error_surfaces() {
     // validation against real model limits is covered by phono_core_tests.
 }
 
+void test_tokenizer_rejects_null_engine() {
+    char** syllables = nullptr;
+    int32_t syllable_count = 0;
+    check(phono_tokenizer_separate_greedy(nullptr, "woxihuanni", &syllables,
+                                          &syllable_count) == PHONO_INVALID_ARGUMENT,
+          "separation with null engine should yield invalid_argument");
+    check(syllables == nullptr && syllable_count == 0,
+          "failed separation should not allocate output");
+    check(phono_tokenizer_separate_greedy(nullptr, "woxihuanni", nullptr,
+                                          &syllable_count) == PHONO_INVALID_ARGUMENT,
+          "separation with null output should yield invalid_argument");
+}
+
 }  // namespace
 
 int main() {
@@ -80,5 +93,6 @@ int main() {
     test_engine_rejects_missing_package();
     test_engine_rejects_null_arguments();
     test_core_config_error_surfaces();
+    test_tokenizer_rejects_null_engine();
     return 0;
 }

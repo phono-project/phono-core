@@ -106,6 +106,38 @@ phono_status copy_ids(const std::vector<int32_t>& ids, int32_t** out_ids, int32_
     return PHONO_OK;
 }
 
+phono_status copy_strings(const std::vector<std::string>& strings, char*** out_strings,
+                          int32_t* out_count) {
+    if (out_strings == nullptr || out_count == nullptr) {
+        return PHONO_INVALID_ARGUMENT;
+    }
+    *out_strings = nullptr;
+    *out_count = 0;
+    if (strings.empty()) {
+        return PHONO_OK;
+    }
+
+    size_t text_bytes = 0;
+    for (const auto& string : strings) {
+        text_bytes += string.size() + 1;
+    }
+    const size_t pointer_bytes = strings.size() * sizeof(char*);
+    auto** output = static_cast<char**>(std::malloc(pointer_bytes + text_bytes));
+    if (output == nullptr) {
+        return PHONO_MODEL_ERROR;
+    }
+
+    char* cursor = reinterpret_cast<char*>(output) + pointer_bytes;
+    for (size_t i = 0; i < strings.size(); ++i) {
+        output[i] = cursor;
+        std::memcpy(cursor, strings[i].c_str(), strings[i].size() + 1);
+        cursor += strings[i].size() + 1;
+    }
+    *out_strings = output;
+    *out_count = static_cast<int32_t>(strings.size());
+    return PHONO_OK;
+}
+
 }  // namespace
 
 extern "C" {
@@ -156,6 +188,16 @@ int32_t phono_engine_beam_size(const phono_engine* engine) {
 }
 
 // ── tokenizer ─────────────────────────────────────────────────────────────
+
+phono_status phono_tokenizer_separate_greedy(const phono_engine* engine, const char* pinyin,
+                                              char*** out_syllables, int32_t* out_count) {
+    const auto* e = reinterpret_cast<const InferenceEngine*>(engine);
+    if (e == nullptr || out_syllables == nullptr || out_count == nullptr) {
+        return PHONO_INVALID_ARGUMENT;
+    }
+    const std::string input = pinyin == nullptr ? std::string() : std::string(pinyin);
+    return copy_strings(e->tokenizer().separate_greedy(input), out_syllables, out_count);
+}
 
 phono_status phono_tokenizer_encode_context(const phono_engine* engine, const char* text_utf8,
                                             int32_t** out_ids, int32_t* out_count) {
