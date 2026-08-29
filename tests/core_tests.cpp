@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "algo/trie.hpp"
 #include "algo/zh2hans.hpp"
 #include "context/context.hpp"
 #include "core/config.hpp"
@@ -44,6 +45,23 @@ phono::core::CoreConfig test_core_config() {
     cfg.max_history_length = 4;
     cfg.max_pinyin_length = 3;
     return cfg;
+}
+
+void test_trie_lookup_and_longest_match() {
+    phono::algo::Trie trie;
+    trie.insert("w");
+    trie.insert("wo");
+    trie.insert("xi");
+    trie.insert("xian");
+
+    check(trie.contains("w"), "trie should contain terminal prefixes");
+    check(trie.contains("wo"), "trie should contain inserted words");
+    check(!trie.contains("x"), "trie should reject non-terminal prefixes");
+    check(!trie.contains(""), "trie should reject the empty word");
+    check(trie.longest_match("woxian", 0) == 2, "trie should choose the longest match");
+    check(trie.longest_match("woxian", 2) == 4, "trie should match from an offset");
+    check(trie.longest_match("unknown") == 0, "trie should report a missing match");
+    check(trie.longest_match("wo", 2) == 0, "trie should reject an end offset");
 }
 
 void test_tokenizer_normalizes_and_skips_unknown() {
@@ -316,6 +334,7 @@ void test_core_config_validation() {
 }  // namespace
 
 int main() {
+    test_trie_lookup_and_longest_match();
     test_tokenizer_normalizes_and_skips_unknown();
     test_zh2hans_simplification();
     test_cache_slice_operations();

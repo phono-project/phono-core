@@ -281,6 +281,7 @@ set(PHONO_CORE_SOURCES
     src/core/config.cpp
     src/core/tokenizer.cpp
     src/core/text_normalizer.cpp
+    src/algo/trie.cpp
     src/algo/zh2hans.cpp
     src/context/kv_cache.cpp
     src/context/context.cpp
