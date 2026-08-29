@@ -162,11 +162,11 @@ void render(const phono::apps::ImeEditor& editor, const std::string& separated,
             const std::vector<std::string>& candidates, const std::string& error) {
     std::cout << "\033[2J\033[H"
               << "pinyin> " << editor.text() << "\n"
-              << "[0] " << separated << "\n";
+              << "0. " << separated << "\n";
     for (size_t i = 0; i < candidates.size(); ++i) {
-        std::cout << '[' << i + 1 << "] " << candidates[i] << '\n';
+        std::cout << i + 1 << ". " << candidates[i] << '\n';
     }
-    if (!error.empty()) std::cout << "[!] " << error << '\n';
+    if (!error.empty()) std::cout << "error: " << error << '\n';
     std::cout << "\nLeft/Right: move  Backspace/Delete: erase  Ctrl-C: exit"
               << "\033[1;" << editor.cursor() + 9 << 'H' << std::flush;
 }
