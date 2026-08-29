@@ -28,6 +28,7 @@ Build artifacts are output to results/ by default:
 
 - libphono_core.so — the C-ABI shared library
 - streaming_benchmark_demo_capi — the C-ABI demo
+- ime_demo_capi — the interactive C-ABI IME demo
 
 ## Selective build (operator/dtype pruning)
 

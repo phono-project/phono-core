@@ -70,3 +70,5 @@ int my_cancel(void* user_data) {
 ## 演示程序
 
 streaming_benchmark_demo_capi 是使用该 C 调用规范的完整示例：自动切分一行原始拼音，生成候选并选择提交。它的源码位于 apps/streaming_benchmark_demo_capi.cpp。
+
+ime_demo_capi 通过同一套 C ABI 提供实时终端界面，支持输入、Backspace/Delete 删除、左右移动光标；第 0 栏显示自动切分结果，第 1-N 栏显示候选，并支持 Ctrl-C 立即中止。

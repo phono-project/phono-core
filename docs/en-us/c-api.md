@@ -70,3 +70,5 @@ See the declarations and comments in interface/phono_api.h, including phono_engi
 ## Demo
 
 streaming_benchmark_demo_capi is a complete example of using this C call convention: it segments a raw pinyin line, generates candidates and commits the chosen one. Its source is in apps/streaming_benchmark_demo_capi.cpp.
+
+ime_demo_capi provides a real-time terminal UI through the same C ABI. It supports insertion, backspace/delete, left/right cursor movement, automatic segmentation on bar 0, candidates on bars 1-N, and immediate Ctrl-C cancellation.

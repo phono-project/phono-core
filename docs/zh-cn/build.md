@@ -28,6 +28,7 @@ CMake 在未显式指定 CMAKE_TOOLCHAIN_FILE 时会自动读取环境变量 VCP
 
 - libphono_core.so — C-ABI 共享库
 - streaming_benchmark_demo_capi — C-ABI 演示程序
+- ime_demo_capi — 交互式 C-ABI 输入法演示程序
 
 ## 选择性编译（算子/精度裁剪）
 

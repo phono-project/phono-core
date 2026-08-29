@@ -375,6 +375,11 @@ target_link_libraries(streaming_benchmark_demo_capi PRIVATE phono_core_shared)
 set_target_properties(streaming_benchmark_demo_capi PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${PHONO_RUNTIME_OUTPUT_DIR}")
 
+add_executable(ime_demo_capi apps/ime_demo_capi.cpp)
+target_link_libraries(ime_demo_capi PRIVATE phono_core_shared)
+set_target_properties(ime_demo_capi PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${PHONO_RUNTIME_OUTPUT_DIR}")
+
 if(BUILD_TESTING)
   add_executable(phono_core_tests tests/core_tests.cpp)
   target_link_libraries(phono_core_tests PRIVATE phono_core)
@@ -391,4 +396,9 @@ if(BUILD_TESTING)
   add_executable(phono_engine_tests tests/engine_tests.cpp)
   target_link_libraries(phono_engine_tests PRIVATE phono_core)
   add_test(NAME phono_engine_tests COMMAND phono_engine_tests)
+
+  add_executable(phono_ime_editor_tests tests/ime_editor_tests.cpp)
+  target_include_directories(phono_ime_editor_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  add_test(NAME phono_ime_editor_tests COMMAND phono_ime_editor_tests)
+  add_test(NAME ime_demo_capi_help COMMAND ime_demo_capi --help)
 endif()
