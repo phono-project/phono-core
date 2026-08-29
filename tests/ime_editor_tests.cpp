@@ -46,5 +46,8 @@ int main() {
     editor.erase();
     check(editor.text() == "ac" && editor.cursor() == 2,
           "right and delete should stop at end");
+    editor.clear();
+    check(editor.text().empty() && editor.cursor() == 0,
+          "clear should reset text and cursor");
     return 0;
 }

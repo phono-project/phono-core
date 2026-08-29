@@ -159,12 +159,14 @@ std::string join_syllables(char* const* syllables, int32_t count) {
 }
 
 void render(const phono::apps::ImeEditor& editor, const std::string& separated,
+            const std::string& history,
             const std::vector<std::string>& candidates, const std::string& error) {
     std::cout << "\033[2J\033[H"
               << "pinyin> " << editor.text() << "\n"
-              << "0. " << separated << "\n";
+              << "0." << separated << "\n"
+              << "history: " << history << "\n";
     for (size_t i = 0; i < candidates.size(); ++i) {
-        std::cout << i + 1 << ". " << candidates[i] << '\n';
+        std::cout << i + 1 << '.' << candidates[i] << '\n';
     }
     if (!error.empty()) std::cout << "error: " << error << '\n';
     std::cout << "\nLeft/Right: move  Backspace/Delete: erase  Ctrl-C: exit"
@@ -229,9 +231,10 @@ int main(int argc, char** argv) {
         } else {
             phono::apps::ImeEditor editor;
             std::string separated;
+            std::string history;
             std::vector<std::string> candidates;
             std::string error;
-            render(editor, separated, candidates, error);
+            render(editor, separated, history, candidates, error);
 
             while (g_interrupted == 0) {
                 const KeyPress press = read_key();
@@ -240,7 +243,16 @@ int main(int argc, char** argv) {
                 bool changed = true;
                 switch (press.key) {
                     case Key::Character:
-                        if ((press.character >= 'a' && press.character <= 'z') ||
+                        if (press.character >= '1' && press.character <= '9' &&
+                            static_cast<size_t>(press.character - '1') < candidates.size()) {
+                            history += candidates[static_cast<size_t>(press.character - '1')];
+                            editor.clear();
+                            separated.clear();
+                            candidates.clear();
+                            error.clear();
+                            render(editor, separated, history, candidates, error);
+                            continue;
+                        } else if ((press.character >= 'a' && press.character <= 'z') ||
                             (press.character >= 'A' && press.character <= 'Z') ||
                             press.character == '\'') {
                             editor.insert(static_cast<char>(std::tolower(
@@ -275,11 +287,23 @@ int main(int argc, char** argv) {
                             engine, syllables, syllable_count, &pinyin_ids, &pinyin_count);
                     }
 
+                    int32_t* context_ids = nullptr;
+                    int32_t context_count = 0;
+                    if (status == PHONO_OK) {
+                        status = phono_tokenizer_encode_context(
+                            engine, history.c_str(), &context_ids, &context_count);
+                    }
+                    if (status == PHONO_OK) {
+                        context = phono_context_manager_get_auto(
+                            manager, context_ids, context_count);
+                        if (context == nullptr) status = PHONO_MODEL_ERROR;
+                    }
+
                     phono_generate_result result{};
                     if (status == PHONO_OK) {
                         status = phono_session_generate(session, context, pinyin_ids, pinyin_count,
-                                                        nullptr, 0, cancellation_check, nullptr,
-                                                        &result);
+                                                        context_ids, context_count,
+                                                        cancellation_check, nullptr, &result);
                     }
                     if (status == PHONO_OK) {
                         for (int32_t i = 0; i < result.beam_count; ++i) {
@@ -291,11 +315,12 @@ int main(int argc, char** argv) {
                         error = phono_error_name(status);
                     }
                     phono_generate_result_free(&result);
+                    phono_free(context_ids);
                     phono_free(pinyin_ids);
                     phono_free(syllables);
                     if (status == PHONO_CANCELLED && g_interrupted != 0) break;
                 }
-                render(editor, separated, candidates, error);
+                render(editor, separated, history, candidates, error);
             }
         }
     }

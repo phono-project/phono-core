@@ -10,6 +10,11 @@ public:
     const std::string& text() const { return text_; }
     size_t cursor() const { return cursor_; }
 
+    void clear() {
+        text_.clear();
+        cursor_ = 0;
+    }
+
     void insert(char ch) {
         text_.insert(text_.begin() + static_cast<std::string::difference_type>(cursor_), ch);
         ++cursor_;
