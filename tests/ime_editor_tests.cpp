@@ -49,5 +49,16 @@ int main() {
     editor.clear();
     check(editor.text().empty() && editor.cursor() == 0,
           "clear should reset text and cursor");
+
+    const std::string ni = "\xE4\xBD\xA0";
+    const std::string hao = "\xE5\xA5\xBD";
+    editor.insert(ni + hao);
+    editor.move_left();
+    check(editor.cursor() == ni.size(), "left should cross one UTF-8 codepoint");
+    editor.backspace();
+    check(editor.text() == hao && editor.cursor() == 0,
+          "backspace should erase one UTF-8 codepoint");
+    editor.erase();
+    check(editor.text().empty(), "delete should erase one UTF-8 codepoint");
     return 0;
 }

@@ -158,19 +158,23 @@ std::string join_syllables(char* const* syllables, int32_t count) {
     return separated;
 }
 
-void render(const phono::apps::ImeEditor& editor, const std::string& separated,
-            const std::string& history,
+std::string with_cursor(const phono::apps::ImeEditor& editor) {
+    return editor.text().substr(0, editor.cursor()) + '|' + editor.text().substr(editor.cursor());
+}
+
+void render(const phono::apps::ImeEditor& pinyin, const std::string& separated,
+            const phono::apps::ImeEditor& history,
             const std::vector<std::string>& candidates, const std::string& error) {
+    const bool editing_history = pinyin.text().empty();
     std::cout << "\033[2J\033[H"
-              << "pinyin> " << editor.text() << "\n"
+              << "pinyin> " << (editing_history ? pinyin.text() : with_cursor(pinyin)) << "\n"
               << "0." << separated << "\n"
-              << "history: " << history << "\n";
+              << "history: " << (editing_history ? with_cursor(history) : history.text()) << "\n";
     for (size_t i = 0; i < candidates.size(); ++i) {
         std::cout << i + 1 << '.' << candidates[i] << '\n';
     }
     if (!error.empty()) std::cout << "error: " << error << '\n';
-    std::cout << "\nLeft/Right: move  Backspace/Delete: erase  Ctrl-C: exit"
-              << "\033[1;" << editor.cursor() + 9 << 'H' << std::flush;
+    std::cout << "\nLeft/Right: move  Backspace/Delete: erase  Ctrl-C: exit" << std::flush;
 }
 
 void print_error(const char* operation, phono_status status) {
@@ -229,12 +233,12 @@ int main(int argc, char** argv) {
             std::cerr << "ime_demo_capi requires an interactive terminal" << std::endl;
             exit_code = 2;
         } else {
-            phono::apps::ImeEditor editor;
+            phono::apps::ImeEditor pinyin;
             std::string separated;
-            std::string history;
+            phono::apps::ImeEditor history;
             std::vector<std::string> candidates;
             std::string error;
-            render(editor, separated, history, candidates, error);
+            render(pinyin, separated, history, candidates, error);
 
             while (g_interrupted == 0) {
                 const KeyPress press = read_key();
@@ -245,26 +249,38 @@ int main(int argc, char** argv) {
                     case Key::Character:
                         if (press.character >= '1' && press.character <= '9' &&
                             static_cast<size_t>(press.character - '1') < candidates.size()) {
-                            history += candidates[static_cast<size_t>(press.character - '1')];
-                            editor.clear();
+                            history.insert(candidates[static_cast<size_t>(press.character - '1')]);
+                            pinyin.clear();
                             separated.clear();
                             candidates.clear();
                             error.clear();
-                            render(editor, separated, history, candidates, error);
+                            render(pinyin, separated, history, candidates, error);
                             continue;
                         } else if ((press.character >= 'a' && press.character <= 'z') ||
                             (press.character >= 'A' && press.character <= 'Z') ||
                             press.character == '\'') {
-                            editor.insert(static_cast<char>(std::tolower(
+                            pinyin.insert(static_cast<char>(std::tolower(
                                 static_cast<unsigned char>(press.character))));
                         } else {
                             changed = false;
                         }
                         break;
-                    case Key::Backspace: editor.backspace(); break;
-                    case Key::Delete: editor.erase(); break;
-                    case Key::Left: editor.move_left(); break;
-                    case Key::Right: editor.move_right(); break;
+                    case Key::Backspace:
+                        if (pinyin.text().empty()) history.backspace();
+                        else pinyin.backspace();
+                        break;
+                    case Key::Delete:
+                        if (pinyin.text().empty()) history.erase();
+                        else pinyin.erase();
+                        break;
+                    case Key::Left:
+                        if (pinyin.text().empty()) history.move_left();
+                        else pinyin.move_left();
+                        break;
+                    case Key::Right:
+                        if (pinyin.text().empty()) history.move_right();
+                        else pinyin.move_right();
+                        break;
                     case Key::End:
                     case Key::Ignore: changed = false; break;
                 }
@@ -273,11 +289,11 @@ int main(int argc, char** argv) {
                 separated.clear();
                 candidates.clear();
                 error.clear();
-                if (!editor.text().empty()) {
+                if (!pinyin.text().empty()) {
                     char** syllables = nullptr;
                     int32_t syllable_count = 0;
                     status = phono_tokenizer_separate_greedy(
-                        engine, editor.text().c_str(), &syllables, &syllable_count);
+                        engine, pinyin.text().c_str(), &syllables, &syllable_count);
                     if (status == PHONO_OK) separated = join_syllables(syllables, syllable_count);
 
                     int32_t* pinyin_ids = nullptr;
@@ -291,7 +307,7 @@ int main(int argc, char** argv) {
                     int32_t context_count = 0;
                     if (status == PHONO_OK) {
                         status = phono_tokenizer_encode_context(
-                            engine, history.c_str(), &context_ids, &context_count);
+                            engine, history.text().c_str(), &context_ids, &context_count);
                     }
                     if (status == PHONO_OK) {
                         context = phono_context_manager_get_auto(
@@ -320,7 +336,7 @@ int main(int argc, char** argv) {
                     phono_free(syllables);
                     if (status == PHONO_CANCELLED && g_interrupted != 0) break;
                 }
-                render(editor, separated, history, candidates, error);
+                render(pinyin, separated, history, candidates, error);
             }
         }
     }
