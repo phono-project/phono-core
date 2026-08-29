@@ -6,6 +6,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "algo/trie.hpp"
+
 namespace phono::core {
 
 class ModelPackageConfig;  // fwd decl (config.hpp)
@@ -38,6 +40,10 @@ public:
     // vocab fall back to the nearest match by edit distance.
     std::vector<int32_t> encode_pinyin(const std::vector<std::string>& pinyin_list) const;
 
+    // Greedily split unseparated pinyin using the longest vocabulary match.
+    // A single quote forces a syllable boundary and is not included in output.
+    std::vector<std::string> separate_greedy(const std::string& pinyin) const;
+
     // Convert a sequence of chinese_vocab ids back into UTF-8 text.
     // Unknown ids are silently skipped.
     std::string ids_to_text(const std::vector<int32_t>& ids) const;
@@ -58,6 +64,7 @@ private:
 
     std::unordered_map<std::string, int32_t> pinyin_vocab_;
     std::vector<std::string> pinyin_list_;  // id -> syllable, for edit-distance fallback
+    algo::Trie pinyin_tree_;
 
     std::unordered_map<std::string, int32_t> context_vocab_;  // includes special tokens
     int32_t context_base_size_ = 0;                            // size before special tokens

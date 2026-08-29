@@ -66,6 +66,7 @@ Tokenizer::Tokenizer(const std::string& chinese_vocab_path, const std::string& c
             if (pinyin_vocab_.find(py) == pinyin_vocab_.end()) {
                 pinyin_vocab_.emplace(py, idx);
                 pinyin_list_.push_back(py);
+                pinyin_tree_.insert(py);
                 ++idx;
             }
         }
@@ -157,6 +158,26 @@ std::vector<int32_t> Tokenizer::encode_pinyin(const std::vector<std::string>& pi
         ids.push_back(best_idx);
     }
     return ids;
+}
+
+std::vector<std::string> Tokenizer::separate_greedy(const std::string& pinyin) const {
+    std::vector<std::string> syllables;
+    size_t position = 0;
+    while (position < pinyin.size()) {
+        if (pinyin[position] == '\'') {
+            ++position;
+            continue;
+        }
+
+        const size_t breakpoint = pinyin.find('\'', position);
+        const size_t segment_end = breakpoint == std::string::npos ? pinyin.size() : breakpoint;
+        const size_t match_length = pinyin_tree_.longest_match(
+            std::string_view(pinyin.data(), segment_end), position);
+        const size_t token_length = match_length == 0 ? 1 : match_length;
+        syllables.emplace_back(pinyin.substr(position, token_length));
+        position += token_length;
+    }
+    return syllables;
 }
 
 std::string Tokenizer::ids_to_text(const std::vector<int32_t>& ids) const {

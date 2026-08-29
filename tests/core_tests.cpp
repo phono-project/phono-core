@@ -69,7 +69,7 @@ void test_tokenizer_normalizes_and_skips_unknown() {
     std::filesystem::create_directories(dir);
     write_file(dir / "chinese.txt", "\xE5\x8F\xB0\nA\n");
     write_file(dir / "context.txt", "\xE5\x8F\xB0\nA\nknown\n");
-    write_file(dir / "pinyin.txt", "ni\n");
+    write_file(dir / "pinyin.txt", "w\nwo\nx\nxi\nxian\na\nan\nh\nhuan\nn\nni\n");
 
     phono::core::Tokenizer tokenizer(
         (dir / "chinese.txt").string(), (dir / "context.txt").string(),
@@ -83,6 +83,19 @@ void test_tokenizer_normalizes_and_skips_unknown() {
     check(tokenizer.encode_context("X").empty(), "unknown context ids should be skipped");
     check(tokenizer.chinese_id_to_context_id(0) == 0, "Chinese/context ids should map");
     check(tokenizer.chinese_id_to_context_id(99) == -1, "unknown Chinese id should fail");
+    check(tokenizer.separate_greedy("woxihuanni") ==
+              std::vector<std::string>({"wo", "xi", "huan", "ni"}),
+          "pinyin should use greedy longest matches");
+    check(tokenizer.separate_greedy("xian") == std::vector<std::string>({"xian"}),
+          "an unbroken pinyin should keep the longest syllable");
+    check(tokenizer.separate_greedy("xi'an") == std::vector<std::string>({"xi", "an"}),
+          "single quotes should force breakpoints");
+    check(tokenizer.separate_greedy("wxhn") ==
+              std::vector<std::string>({"w", "x", "h", "n"}),
+          "jianpin entries should be separated like full syllables");
+    check(tokenizer.separate_greedy("'wo''xi'") ==
+              std::vector<std::string>({"wo", "xi"}),
+          "empty quoted segments should be ignored");
 
     std::filesystem::remove_all(dir);
 }
