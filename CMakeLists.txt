@@ -367,15 +367,9 @@ set_target_properties(phono_core_shared PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${PHONO_RUNTIME_OUTPUT_DIR}")
 
 # ═══════════════════════════════════════════════════════════════════════
-# Demos: the C++ API demo (links the static core) and the C-ABI demo
-# (links libphono_core.so and talks to it exclusively through the stable C
-# interface). Both implement the same interactive streaming loop.
+# Demo: links libphono_core.so and talks to it exclusively through the stable
+# C interface.
 # ═══════════════════════════════════════════════════════════════════════
-add_executable(streaming_benchmark_demo apps/streaming_benchmark_demo.cpp)
-target_link_libraries(streaming_benchmark_demo PRIVATE phono_core)
-set_target_properties(streaming_benchmark_demo PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${PHONO_RUNTIME_OUTPUT_DIR}")
-
 add_executable(streaming_benchmark_demo_capi apps/streaming_benchmark_demo_capi.cpp)
 target_link_libraries(streaming_benchmark_demo_capi PRIVATE phono_core_shared)
 set_target_properties(streaming_benchmark_demo_capi PROPERTIES

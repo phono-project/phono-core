@@ -31,7 +31,7 @@ The code is organized into four subdirectories — src/core, src/algo, src/conte
   - inference_engine — InferenceEngine 加载 v2 多方法 pre / post .pte 模块；InferenceSession 提供无状态 fill / generate API，以显式上下文槽位为参数
 - src/custom_ops — ExecuTorch 自定义算子，命名空间 phono::ops：update_mhsa_kv
 - interface — C-ABI 调用规范（phono_api.h / phono_api.cpp），编译为 libphono_core.so
-- apps — 可执行程序：streaming_benchmark_demo（C++ API 演示）与 streaming_benchmark_demo_capi（C-ABI 演示）
+- apps — 可执行程序：streaming_benchmark_demo_capi（C-ABI 演示）
 - tests — 单元测试与模型级测试，由 CTest 驱动
 - docs — 文档（docs/zh-cn 与 docs/en-us 分语言维护）
 - third_party — ExecuTorch 源码，由 pixi 的 setup 任务拉取
@@ -51,7 +51,7 @@ The code is organized into four subdirectories — src/core, src/algo, src/conte
   - inference_engine — InferenceEngine loads the v2 multi-method pre/post .pte modules; InferenceSession provides the stateless fill/generate APIs taking an explicit context slot
 - src/custom_ops — ExecuTorch custom operator, namespace phono::ops: update_mhsa_kv
 - interface — the C-ABI call convention (phono_api.h / phono_api.cpp), compiled into libphono_core.so
-- apps — executables: streaming_benchmark_demo (C++ API demo) and streaming_benchmark_demo_capi (C-ABI demo)
+- apps — executable: streaming_benchmark_demo_capi (C-ABI demo)
 - tests — unit and model-level tests driven by CTest
 - docs — documentation, maintained separately under docs/zh-cn and docs/en-us
 - third_party — ExecuTorch source, fetched by the pixi setup task
@@ -142,13 +142,7 @@ Because the vcpkg configuration, the CMake generator and the compiler toolchain 
 
 ## 使用
 
-下载模型之后，运行演示程序（C++ API 版）：
-
-```
-results/streaming_benchmark_demo phonop2c_v2_0_base_model
-```
-
-或 C-ABI 版：
+下载模型之后，运行 C-ABI 演示程序：
 
 ```
 results/streaming_benchmark_demo_capi phonop2c_v2_0_base_model
@@ -158,13 +152,7 @@ results/streaming_benchmark_demo_capi phonop2c_v2_0_base_model
 
 ## Usage
 
-Run the demo after downloading the model. The C++ API version:
-
-```
-results/streaming_benchmark_demo phonop2c_v2_0_base_model
-```
-
-or the C-ABI version:
+Run the C-ABI demo after downloading the model:
 
 ```
 results/streaming_benchmark_demo_capi phonop2c_v2_0_base_model

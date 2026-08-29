@@ -1,10 +1,9 @@
 // Usage:
 //   streaming_benchmark_demo_capi <model_package_dir> [core_config_json]
 //
-// Identical to streaming_benchmark_demo but drives the engine exclusively
-// through the stable C ABI (interface/phono_api.h). The core_config is handed
-// to the library as a plain JSON string; the library parses and validates it
-// internally.
+// Drives the engine exclusively through the stable C ABI
+// (interface/phono_api.h). The core_config is handed to the library as a plain
+// JSON string; the library parses and validates it internally.
 
 #include <chrono>
 #include <csignal>

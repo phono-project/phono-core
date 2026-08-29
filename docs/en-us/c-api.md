@@ -68,4 +68,4 @@ See the declarations and comments in interface/phono_api.h, including phono_engi
 
 ## Demo
 
-streaming_benchmark_demo_capi is a complete example of using this C call convention, with logic identical to streaming_benchmark_demo (the C++ API version): it reads a space-separated pinyin line, generates candidates and commits the chosen one. Its source is in apps/streaming_benchmark_demo_capi.cpp.
+streaming_benchmark_demo_capi is a complete example of using this C call convention: it reads a space-separated pinyin line, generates candidates and commits the chosen one. Its source is in apps/streaming_benchmark_demo_capi.cpp.

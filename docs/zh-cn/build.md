@@ -27,7 +27,6 @@ CMake 在未显式指定 CMAKE_TOOLCHAIN_FILE 时会自动读取环境变量 VCP
 构建产物默认输出到 results/ 目录，包括：
 
 - libphono_core.so — C-ABI 共享库
-- streaming_benchmark_demo — C++ API 演示程序
 - streaming_benchmark_demo_capi — C-ABI 演示程序
 
 ## 选择性编译（算子/精度裁剪）

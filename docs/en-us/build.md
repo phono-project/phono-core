@@ -27,7 +27,6 @@ When CMAKE_TOOLCHAIN_FILE is not set explicitly, CMake reads the VCPKG_ROOT envi
 Build artifacts are output to results/ by default:
 
 - libphono_core.so — the C-ABI shared library
-- streaming_benchmark_demo — the C++ API demo
 - streaming_benchmark_demo_capi — the C-ABI demo
 
 ## Selective build (operator/dtype pruning)

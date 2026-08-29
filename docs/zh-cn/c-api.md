@@ -68,4 +68,4 @@ int my_cancel(void* user_data) {
 
 ## 演示程序
 
-streaming_benchmark_demo_capi 是使用该 C 调用规范的完整示例，逻辑与 streaming_benchmark_demo（C++ API 版）保持一致：读取一行空格分隔的拼音，生成候选并选择提交。它的源码位于 apps/streaming_benchmark_demo_capi.cpp。
+streaming_benchmark_demo_capi 是使用该 C 调用规范的完整示例：读取一行空格分隔的拼音，生成候选并选择提交。它的源码位于 apps/streaming_benchmark_demo_capi.cpp。
