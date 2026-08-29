@@ -4,15 +4,11 @@
 
 phono-core 是 PhonoP2C 的边缘侧 C++ 推理引擎：在 ExecuTorch 运行时上部署两段式 PostfixLM 拼音转汉字模型，输入「中文上下文 + 拼音音节」，输出汉字候选。它只依赖 ExecuTorch 的 C++ API 与少量系统库，适合部署到移动端或嵌入式设备。
 
-当前分支为 v2。相比早期的 v1 设计，本分支做了几项重大调整：推理会话改为无状态设计，会话不再在构造时绑定上下文，所有需要上下文的方法都以显式参数传入上下文槽位，便于槽位切换与 C 调用规范的制定；中止语义改为「回调函数 + 上下文指针」的检查形式，generate 通过轮询回调确认中止，并在中断时回滚生成游标（无需回滚 KV 缓存）；上下文窗口引入软上限 max_history_length 与松弛区间 slack_interval，在触发上限之前先把历史截断到上限减去松弛区间的长度，并始终保留第一个 BOS 作为注意力汇点；拼音输入窗口新增 max_pinyin_length 上限，该上限不得高于后段模型的硬性长度限制。
-
 代码按功能划分为 src/core、src/algo、src/context、src/engine 四个子目录，对应 phono::core、phono::algo、phono::context、phono::engine 四个子命名空间，另有 src/custom_ops 目录（命名空间 phono::ops）提供 ExecuTorch 自定义算子。src/core 与 src/algo 不依赖 ExecuTorch，是纯逻辑层，可独立测试；src/context 与 src/engine 依赖 ExecuTorch 运行时。interface 目录实现面向 C-ABI 的调用规范，编译为共享库 libphono_core.so，供 C 语言、Python 绑定、移动端或其他平台直接调用。
 
 ## Introduction
 
 phono-core is the on-device C++ inference engine for PhonoP2C: it deploys the two-stage PostfixLM pinyin-to-Chinese model on the ExecuTorch runtime, taking "Chinese context + pinyin syllables" as input and producing Chinese-character candidates. It depends only on ExecuTorch's C++ API and a few system libraries, making it suitable for mobile or embedded deployment.
-
-The current branch is v2. Compared with the earlier v1 design, this branch makes several significant changes: the inference session is now stateless and never binds a context at construction time, with every context-dependent method taking an explicit context slot as a parameter, which makes slot switching and a stable C ABI straightforward; the cancellation semantics have been redesigned as a callback-plus-context-pointer check that generate polls, and the generation cursors are rolled back on interruption (without rewinding the KV cache); the context window introduces a soft cap max_history_length together with a slack interval slack_interval, truncating history to max_history_length minus slack_interval before the cap is hit while always keeping the first BOS as the attention sink; and the pinyin input window gains a max_pinyin_length cap that must not exceed the post model's hard length limit.
 
 The code is organized into four subdirectories — src/core, src/algo, src/context, src/engine — mirrored by the sub-namespaces phono::core, phono::algo, phono::context and phono::engine, plus src/custom_ops (namespace phono::ops) for ExecuTorch custom operators. src/core and src/algo are ExecuTorch-independent pure logic that can be tested in isolation; src/context and src/engine depend on the ExecuTorch runtime. The interface directory implements the C-ABI call convention and is compiled into the shared library libphono_core.so for direct consumption by C code, Python bindings, mobile or other platforms.
 
@@ -75,7 +71,7 @@ v2 模型可以通过 huggingface-cli 下载：
 hf download afirelily/phonop2c_v2_0_alpha_05_base_model --local-dir ./phonop2c_v2_0_base_model
 ```
 
-该 v2 模型要求 pre 程序包含 pre_model_pass1 与 pre_model_pass2 两个方法，并要求 post 方法名为 post_model；模型包的 config.json 中 model_format_version 为 2。请勿使用 v1 模型包，v1 包缺少上述方法，无法被 v2 引擎加载。
+该 v2 模型要求 pre 程序包含 pre_model_pass1 与 pre_model_pass2 两个方法，并要求 post 方法名为 post_model；模型包的 config.json 中 model_format_version 为 2。请勿使用早期的 v1 模型包，v1 包缺少上述方法，无法被 v2 引擎加载。
 
 ## Model Package
 
@@ -96,7 +92,7 @@ Download the v2 model with huggingface-cli:
 hf download afirelily/phonop2c_v2_0_alpha_05_base_model --local-dir ./phonop2c_v2_0_base_model
 ```
 
-The v2 model requires the pre program to expose pre_model_pass1 and pre_model_pass2 and the post method to be named post_model; model_format_version is 2 in the package's config.json. Do not use v1 packages — they lack the required methods and cannot be loaded by the v2 engine.
+The v2 model requires the pre program to expose pre_model_pass1 and pre_model_pass2 and the post method to be named post_model; model_format_version is 2 in the package's config.json. Do not use earlier v1 packages — they lack the required methods and cannot be loaded by the v2 engine.
 
 ## 构建与运行
 
@@ -150,7 +146,11 @@ results/streaming_benchmark_demo_capi phonop2c_v2_0_base_model
 
 程序从 stdin 读取一行连续拼音窗口，例如 nihao，并通过 phono_tokenizer_separate_greedy 自动切分；可使用单引号显式提示边界，例如 ni'hao。每个窗口通过 InferenceSession::generate 执行 B 路 beam search；提交候选后下一次 fill 只对新增的严格因果历史做增量预填充。core_config 由程序从模型包的 core_configs/default.json 加载，也支持以第二个命令行参数传入自定义的 JSON 文件；当参数不符合模型限制（例如 beam 或上下文最大长度超出模型极限）时，程序打印错误枚举代码并退出。
 
-如需模拟实时输入法编辑，可运行 `results/ime_demo_capi phonop2c_v2_0_base_model`。程序支持左右移动光标以及 Backspace/Delete 删除；拼音为空时，这些编辑键作用于已确认历史，模型仅接收历史光标之前的内容。此时还可用上下键切换历史，从而测试 ContextManager 的缓存复用；默认创建 2 个上下文，也可通过第三个参数指定数量。切分栏实时显示自动切分结果，下一栏显示当前历史，其余栏显示候选。输入候选编号即可在光标处提交到历史。底栏显示生成延迟：不超过 100 ms 为绿色，不超过 300 ms 为黄色，否则为红色。按 Ctrl-C 立即退出。
+模拟实时输入法编辑，可以运行：
+```
+results/ime_demo_capi phonop2c_v2_0_base_model
+```
+程序支持左右移动光标以及 Backspace/Delete 删除；拼音为空时，这些编辑键作用于已确认历史，模型仅接收历史光标之前的内容。此时还可用上下键切换历史，从而测试 ContextManager 的缓存复用；默认创建 2 个上下文，也可通过第三个参数指定数量。切分栏实时显示自动切分结果，下一栏显示当前历史，其余栏显示候选。输入候选编号即可在光标处提交到历史。按 Ctrl-C 退出。
 
 ## Usage
 
@@ -162,7 +162,13 @@ results/streaming_benchmark_demo_capi phonop2c_v2_0_base_model
 
 The program reads one unseparated pinyin window per line from stdin, e.g. nihao, and segments it with phono_tokenizer_separate_greedy; use a single quote to explicitly hint a boundary, e.g. ni'hao. Each window uses InferenceSession::generate for B-way beam search; after a candidate is committed, the next fill incrementally pre-fills only the new strictly-causal history. The core_config is loaded from the package's core_configs/default.json, and a custom JSON file can be passed as the second command-line argument; when a parameter does not fit the model (for example the beam or the context length exceeds a model limit), the program prints the error enum code and exits.
 
-For real-time editing with left/right movement and backspace/delete, run `results/ime_demo_capi phonop2c_v2_0_base_model`. When pinyin is empty, those editing keys operate on committed history, and only the history prefix before the cursor is sent to the model. Up/Down then switches histories to exercise ContextManager cache reuse. Two contexts are created by default; pass a third argument to choose another count. The segmentation bar shows automatic segmentation, the next bar shows the active history, and the remaining bars show candidates after every edit. Type a candidate number to commit it at the cursor. The bottom bar shows generation latency in green at up to 100 ms, yellow at up to 300 ms, and red above 300 ms. Press Ctrl-C to exit.
+For real-time editing with left/right movement and backspace/delete, run:
+
+```
+results/ime_demo_capi phonop2c_v2_0_base_model
+```
+
+When pinyin is empty, those editing keys operate on committed history, and only the history prefix before the cursor is sent to the model. Up/Down then switches histories to exercise ContextManager cache reuse. Two contexts are created by default; pass a third argument to choose another count. The segmentation bar shows automatic segmentation, the next bar shows the active history, and the remaining bars show candidates after every edit. Type a candidate number to commit it at the cursor. Press Ctrl-C to exit.
 
 ## 流式推理设计
 
