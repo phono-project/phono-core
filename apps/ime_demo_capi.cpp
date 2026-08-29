@@ -2,12 +2,15 @@
 //   ime_demo_capi <model_package_dir> [core_config_json]
 
 #include <cctype>
+#include <chrono>
 #include <cerrno>
 #include <csignal>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -21,6 +24,7 @@
 #endif
 
 #include "apps/ime_editor.hpp"
+#include "apps/ime_ui.hpp"
 #include "phono_api.h"
 
 namespace {
@@ -164,7 +168,8 @@ std::string with_cursor(const phono::apps::ImeEditor& editor) {
 
 void render(const phono::apps::ImeEditor& pinyin, const std::string& separated,
             const phono::apps::ImeEditor& history,
-            const std::vector<std::string>& candidates, const std::string& error) {
+            const std::vector<std::string>& candidates, const std::string& error,
+            const std::optional<double>& latency_ms) {
     const bool editing_history = pinyin.text().empty();
     std::cout << "\033[2J\033[H"
               << "pinyin> " << (editing_history ? pinyin.text() : with_cursor(pinyin)) << "\n"
@@ -174,6 +179,18 @@ void render(const phono::apps::ImeEditor& pinyin, const std::string& separated,
         std::cout << i + 1 << '.' << candidates[i] << '\n';
     }
     if (!error.empty()) std::cout << "error: " << error << '\n';
+    if (latency_ms.has_value()) {
+        const char* color = "\033[31m";
+        switch (phono::apps::latency_level(*latency_ms)) {
+            case phono::apps::LatencyLevel::Green: color = "\033[32m"; break;
+            case phono::apps::LatencyLevel::Yellow: color = "\033[33m"; break;
+            case phono::apps::LatencyLevel::Red: break;
+        }
+        std::cout << color << "Latency (ms): " << std::fixed << std::setprecision(1)
+                  << *latency_ms << "\033[0m\n";
+    } else {
+        std::cout << "Latency (ms): --\n";
+    }
     std::cout << "\nLeft/Right: move  Backspace/Delete: erase  Ctrl-C: exit" << std::flush;
 }
 
@@ -238,7 +255,8 @@ int main(int argc, char** argv) {
             phono::apps::ImeEditor history;
             std::vector<std::string> candidates;
             std::string error;
-            render(pinyin, separated, history, candidates, error);
+            std::optional<double> latency_ms;
+            render(pinyin, separated, history, candidates, error, latency_ms);
 
             while (g_interrupted == 0) {
                 const KeyPress press = read_key();
@@ -254,7 +272,7 @@ int main(int argc, char** argv) {
                             separated.clear();
                             candidates.clear();
                             error.clear();
-                            render(pinyin, separated, history, candidates, error);
+                            render(pinyin, separated, history, candidates, error, latency_ms);
                             continue;
                         } else if ((press.character >= 'a' && press.character <= 'z') ||
                             (press.character >= 'A' && press.character <= 'Z') ||
@@ -317,9 +335,13 @@ int main(int argc, char** argv) {
 
                     phono_generate_result result{};
                     if (status == PHONO_OK) {
+                        const auto start = std::chrono::steady_clock::now();
                         status = phono_session_generate(session, context, pinyin_ids, pinyin_count,
                                                         context_ids, context_count,
                                                         cancellation_check, nullptr, &result);
+                        latency_ms = std::chrono::duration<double, std::milli>(
+                                         std::chrono::steady_clock::now() - start)
+                                         .count();
                     }
                     if (status == PHONO_OK) {
                         for (int32_t i = 0; i < result.beam_count; ++i) {
@@ -336,7 +358,7 @@ int main(int argc, char** argv) {
                     phono_free(syllables);
                     if (status == PHONO_CANCELLED && g_interrupted != 0) break;
                 }
-                render(pinyin, separated, history, candidates, error);
+                render(pinyin, separated, history, candidates, error, latency_ms);
             }
         }
     }

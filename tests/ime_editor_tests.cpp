@@ -3,6 +3,7 @@
 #include <string>
 
 #include "apps/ime_editor.hpp"
+#include "apps/ime_ui.hpp"
 
 namespace {
 
@@ -60,5 +61,15 @@ int main() {
           "backspace should erase one UTF-8 codepoint");
     editor.erase();
     check(editor.text().empty(), "delete should erase one UTF-8 codepoint");
+
+    using phono::apps::LatencyLevel;
+    check(phono::apps::latency_level(100.0) == LatencyLevel::Green,
+          "100 ms should be green");
+    check(phono::apps::latency_level(100.1) == LatencyLevel::Yellow,
+          "latency above 100 ms should be yellow");
+    check(phono::apps::latency_level(300.0) == LatencyLevel::Yellow,
+          "300 ms should be yellow");
+    check(phono::apps::latency_level(300.1) == LatencyLevel::Red,
+          "latency above 300 ms should be red");
     return 0;
 }
