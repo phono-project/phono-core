@@ -56,6 +56,8 @@ int main() {
     editor.insert(ni + hao);
     editor.move_left();
     check(editor.cursor() == ni.size(), "left should cross one UTF-8 codepoint");
+    check(editor.text_before_cursor() == ni,
+          "model history should stop at the UTF-8 cursor");
     editor.backspace();
     check(editor.text() == hao && editor.cursor() == 0,
           "backspace should erase one UTF-8 codepoint");
@@ -71,5 +73,10 @@ int main() {
           "300 ms should be yellow");
     check(phono::apps::latency_level(300.1) == LatencyLevel::Red,
           "latency above 300 ms should be red");
+    check(phono::apps::next_history(0, 2) == 1 && phono::apps::next_history(1, 2) == 0,
+          "next history should wrap");
+    check(phono::apps::previous_history(0, 2) == 1 &&
+              phono::apps::previous_history(1, 2) == 0,
+          "previous history should wrap");
     return 0;
 }

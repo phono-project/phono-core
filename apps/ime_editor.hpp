@@ -10,6 +10,9 @@ class ImeEditor {
 public:
     const std::string& text() const { return text_; }
     size_t cursor() const { return cursor_; }
+    std::string_view text_before_cursor() const {
+        return std::string_view(text_).substr(0, cursor_);
+    }
 
     void clear() {
         text_.clear();

@@ -1,5 +1,5 @@
 // Usage:
-//   ime_demo_capi <model_package_dir> [core_config_json]
+//   ime_demo_capi <model_package_dir> [core_config_json] [num_contexts]
 
 #include <cctype>
 #include <chrono>
@@ -12,6 +12,7 @@
 #include <iostream>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -53,7 +54,7 @@ std::string load_core_config(const std::string& package_root,
     return buffer.str();
 }
 
-enum class Key { Character, Backspace, Delete, Left, Right, End, Ignore };
+enum class Key { Character, Backspace, Delete, Left, Right, Up, Down, End, Ignore };
 
 struct KeyPress {
     Key key = Key::Ignore;
@@ -89,8 +90,10 @@ KeyPress read_key() {
     if (ch == 3) return {Key::End};
     if (ch == 0 || ch == 224) {
         switch (_getch()) {
+            case 72: return {Key::Up};
             case 75: return {Key::Left};
             case 77: return {Key::Right};
+            case 80: return {Key::Down};
             case 83: return {Key::Delete};
             default: return {Key::Ignore};
         }
@@ -144,6 +147,8 @@ KeyPress read_key() {
     if (!read_byte(bracket) || bracket != '[' || !read_byte(code)) return {Key::Ignore};
     if (code == 'D') return {Key::Left};
     if (code == 'C') return {Key::Right};
+    if (code == 'A') return {Key::Up};
+    if (code == 'B') return {Key::Down};
     if (code == '3') {
         char tilde = '\0';
         if (read_byte(tilde) && tilde == '~') return {Key::Delete};
@@ -168,13 +173,15 @@ std::string with_cursor(const phono::apps::ImeEditor& editor) {
 
 void render(const phono::apps::ImeEditor& pinyin, const std::string& separated,
             const phono::apps::ImeEditor& history,
+            size_t history_index, size_t history_count,
             const std::vector<std::string>& candidates, const std::string& error,
             const std::optional<double>& latency_ms) {
     const bool editing_history = pinyin.text().empty();
     std::cout << "\033[2J\033[H"
               << "pinyin> " << (editing_history ? pinyin.text() : with_cursor(pinyin)) << "\n"
-              << "0." << separated << "\n"
-              << "history: " << (editing_history ? with_cursor(history) : history.text()) << "\n";
+              << "seg: " << separated << "\n"
+              << "history " << history_index + 1 << '/' << history_count << ": "
+              << (editing_history ? with_cursor(history) : history.text()) << "\n";
     for (size_t i = 0; i < candidates.size(); ++i) {
         std::cout << i + 1 << '.' << candidates[i] << '\n';
     }
@@ -191,7 +198,8 @@ void render(const phono::apps::ImeEditor& pinyin, const std::string& separated,
     } else {
         std::cout << "Latency (ms): --\n";
     }
-    std::cout << "\nLeft/Right: move  Backspace/Delete: erase  Ctrl-C: exit" << std::flush;
+    std::cout << "\nLeft/Right: move  Up/Down: switch history"
+              << "  Backspace/Delete: erase  Ctrl-C: exit" << std::flush;
 }
 
 void print_error(const char* operation, phono_status status) {
@@ -205,11 +213,13 @@ void print_error(const char* operation, phono_status status) {
 
 int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "--help") {
-        std::cout << "usage: " << argv[0] << " <model_package_dir> [core_config_json]\n";
+        std::cout << "usage: " << argv[0]
+                  << " <model_package_dir> [core_config_json] [num_contexts]\n";
         return 0;
     }
-    if (argc < 2) {
-        std::cerr << "usage: " << argv[0] << " <model_package_dir> [core_config_json]\n";
+    if (argc < 2 || argc > 4) {
+        std::cerr << "usage: " << argv[0]
+                  << " <model_package_dir> [core_config_json] [num_contexts]\n";
         return 2;
     }
 
@@ -217,6 +227,19 @@ int main(int argc, char** argv) {
     const std::string package_root = argv[1];
     const std::string config_path = argc > 2 ? argv[2] : std::string();
     const std::string config_json = load_core_config(package_root, config_path);
+    int32_t num_contexts = 2;
+    if (argc > 3) {
+        try {
+            size_t parsed = 0;
+            num_contexts = std::stoi(argv[3], &parsed);
+            if (parsed != std::string(argv[3]).size() || num_contexts <= 0) {
+                throw std::invalid_argument("invalid num_contexts");
+            }
+        } catch (...) {
+            std::cerr << "num_contexts must be a positive integer\n";
+            return 2;
+        }
+    }
 
     phono_engine* engine = nullptr;
     phono_status status = phono_engine_create(package_root.c_str(), &engine);
@@ -226,7 +249,7 @@ int main(int argc, char** argv) {
     }
 
     phono_context_manager* manager = nullptr;
-    status = phono_context_manager_create(engine, config_json.c_str(), 1, &manager);
+    status = phono_context_manager_create(engine, config_json.c_str(), num_contexts, &manager);
     if (status != PHONO_OK) {
         print_error("failed to create context manager", status);
         phono_engine_destroy(engine);
@@ -241,7 +264,7 @@ int main(int argc, char** argv) {
         phono_engine_destroy(engine);
         return static_cast<int>(status);
     }
-    phono_context* context = phono_context_manager_get_auto(manager, nullptr, 0);
+    phono_context* context = nullptr;
 
     int exit_code = 0;
     {
@@ -252,15 +275,34 @@ int main(int argc, char** argv) {
         } else {
             phono::apps::ImeEditor pinyin;
             std::string separated;
-            phono::apps::ImeEditor history;
+            std::vector<phono::apps::ImeEditor> histories(static_cast<size_t>(num_contexts));
+            size_t history_index = 0;
             std::vector<std::string> candidates;
             std::string error;
             std::optional<double> latency_ms;
-            render(pinyin, separated, history, candidates, error, latency_ms);
+            render(pinyin, separated, histories[history_index], history_index, histories.size(),
+                   candidates, error, latency_ms);
 
             while (g_interrupted == 0) {
                 const KeyPress press = read_key();
                 if (press.key == Key::End || g_interrupted != 0) break;
+
+                if (pinyin.text().empty() && (press.key == Key::Up || press.key == Key::Down)) {
+                    if (press.key == Key::Up) {
+                        history_index = phono::apps::previous_history(
+                            history_index, histories.size());
+                    } else {
+                        history_index = phono::apps::next_history(history_index, histories.size());
+                    }
+                    separated.clear();
+                    candidates.clear();
+                    error.clear();
+                    render(pinyin, separated, histories[history_index], history_index,
+                           histories.size(), candidates, error, latency_ms);
+                    continue;
+                }
+
+                phono::apps::ImeEditor& history = histories[history_index];
 
                 bool changed = true;
                 switch (press.key) {
@@ -272,7 +314,8 @@ int main(int argc, char** argv) {
                             separated.clear();
                             candidates.clear();
                             error.clear();
-                            render(pinyin, separated, history, candidates, error, latency_ms);
+                            render(pinyin, separated, history, history_index, histories.size(),
+                                   candidates, error, latency_ms);
                             continue;
                         } else if ((press.character >= 'a' && press.character <= 'z') ||
                             (press.character >= 'A' && press.character <= 'Z') ||
@@ -299,6 +342,8 @@ int main(int argc, char** argv) {
                         if (pinyin.text().empty()) history.move_right();
                         else pinyin.move_right();
                         break;
+                    case Key::Up:
+                    case Key::Down:
                     case Key::End:
                     case Key::Ignore: changed = false; break;
                 }
@@ -324,8 +369,9 @@ int main(int argc, char** argv) {
                     int32_t* context_ids = nullptr;
                     int32_t context_count = 0;
                     if (status == PHONO_OK) {
+                        const std::string model_history(history.text_before_cursor());
                         status = phono_tokenizer_encode_context(
-                            engine, history.text().c_str(), &context_ids, &context_count);
+                            engine, model_history.c_str(), &context_ids, &context_count);
                     }
                     if (status == PHONO_OK) {
                         context = phono_context_manager_get_auto(
@@ -358,7 +404,8 @@ int main(int argc, char** argv) {
                     phono_free(syllables);
                     if (status == PHONO_CANCELLED && g_interrupted != 0) break;
                 }
-                render(pinyin, separated, history, candidates, error, latency_ms);
+                render(pinyin, separated, history, history_index, histories.size(), candidates,
+                       error, latency_ms);
             }
         }
     }

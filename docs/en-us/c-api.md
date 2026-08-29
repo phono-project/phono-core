@@ -71,4 +71,4 @@ See the declarations and comments in interface/phono_api.h, including phono_engi
 
 streaming_benchmark_demo_capi is a complete example of using this C call convention: it segments a raw pinyin line, generates candidates and commits the chosen one. Its source is in apps/streaming_benchmark_demo_capi.cpp.
 
-ime_demo_capi provides a real-time terminal UI through the same C ABI. It supports insertion, backspace/delete, left/right cursor movement, automatic segmentation, committed history, numbered candidate selection, color-coded generation latency, and immediate Ctrl-C cancellation.
+ime_demo_capi provides a real-time terminal UI through the same C ABI. It sends only the history prefix before the cursor to the model and supports insertion, backspace/delete, left/right cursor movement, automatic segmentation, numbered candidate selection, color-coded generation latency, and immediate Ctrl-C cancellation. With no active pinyin, Up/Down switches among histories so ContextManager cache reuse can be tested; the optional third argument controls the context count and defaults to 2.
