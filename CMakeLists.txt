@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.24)
 
+# Keep an explicitly supplied triplet intact for cross-compilation.
+if(CMAKE_HOST_WIN32 AND NOT DEFINED VCPKG_TARGET_TRIPLET)
+  set(VCPKG_TARGET_TRIPLET "x64-windows-static" CACHE STRING
+      "vcpkg triplet used to build phono-core dependencies")
+endif()
+
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND DEFINED ENV{VCPKG_ROOT})
   set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
       CACHE FILEPATH "vcpkg toolchain file")
