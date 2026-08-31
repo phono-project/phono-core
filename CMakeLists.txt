@@ -331,8 +331,24 @@ function(phono_link_executorch TARGET VISIBILITY)
     endif()
   endif()
 
-  if(COMMAND executorch_target_link_options_shared_lib)
-    executorch_target_link_options_shared_lib(${TARGET})
+  if(MSVC)
+    # Use /WHOLEARCHIVE instead of executorch_target_link_options_shared_lib on MSVC.
+    foreach(lib IN LISTS EXT_LIBS KERNEL_LIB)
+      target_link_libraries(${TARGET} ${VISIBILITY} "$<LINK_LIBRARY:WHOLEARCHIVE,${lib}>")
+    endforeach()
+    target_link_libraries(${TARGET} ${VISIBILITY} ${EXT_LIBS} ${KERNEL_LIB})
+  else()
+    target_link_libraries(${TARGET} ${VISIBILITY} ${EXT_LIBS} ${KERNEL_LIB})
+    
+    if(COMMAND executorch_target_link_options_shared_lib)
+      foreach(lib IN LISTS EXT_LIBS KERNEL_LIB)
+         executorch_target_link_options_shared_lib(${lib})
+      endforeach()
+
+      if(NOT (CMAKE_SYSTEM_NAME STREQUAL "Windows"))
+          executorch_target_link_options_shared_lib(${TARGET})
+      endif()
+    endif()
   endif()
 endfunction()
 
