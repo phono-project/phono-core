@@ -1,6 +1,7 @@
 {
   "name": "phono-core",
   "version-string": "0.1.1",
+  "builtin-baseline": "194964eec5d5601aef90b456d553412f0b2b0ea5",
   "dependencies": [
     "uni-algo",
     "nlohmann-json"
