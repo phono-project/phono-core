@@ -35,7 +35,7 @@ executorch = "*"
 setup = "python setup_executorch.py"
 format = "black . && isort ."
 lint = "flake8 . && mypy ."
-config = "cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Release $CMAKE_ARGS"
+config = "cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Release"
 build = "cmake --build build"
 
 [environments]
