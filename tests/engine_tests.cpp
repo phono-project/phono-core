@@ -71,6 +71,14 @@ void run(const std::string& package_root) {
           "beam count should match the configured beam width");
     check(first.beams[0].decoded == "你好", "expected 'ni hao' to decode to 你好");
 
+    // Reset only invalidates the cursors. Dirty KV data from the previous run
+    // must be safely overwritten or masked and produce the same result.
+    check(session.reset(*slot) == phono::engine::InferenceError::Ok,
+          "reset after generation should succeed");
+    first = session.generate(*slot, pinyin);
+    check(first.ok() && first.beams[0].decoded == "你好",
+          "generation after a dirty-cache reset should remain deterministic");
+
     const std::vector<int32_t> committed =
         tokenizer.encode_context(first.beams[0].decoded);
     check(session.fill(*slot, committed) == phono::engine::InferenceError::Ok,

@@ -225,6 +225,10 @@ void run(const Options& options) {
     phono::context::ContextManager manager(cfg, 1, core);
     phono::context::Context& context = manager.get_context_by_id(0);
     phono::engine::InferenceSession session(*engine, core);
+    const Statistics reset_stats = measure(
+        options.warmups, options.iterations, []() {},
+        [&]() { require_ok(session.reset(context), "session reset"); });
+    print_result("session_reset", 0, 0, options.iterations, reset_stats);
     for (int32_t history_length : std::vector<int32_t>{0, 16, 64}) {
         const std::vector<int32_t> history(static_cast<size_t>(history_length), context_id);
         for (int32_t pinyin_length : std::vector<int32_t>{1, 2, 4, 8}) {

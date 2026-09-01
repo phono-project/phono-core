@@ -359,11 +359,9 @@ InferenceSession::InferenceSession(InferenceEngine& engine, const core::CoreConf
 }
 
 InferenceError InferenceSession::reset(context::Context& context) {
-    context.self_kv.zero_();
     context.truncate_context_ids(0);
     context.set_current_seqlen(0);
     context.set_history_seqlen(0);
-    fill_kv_.zero_();
     return InferenceError::Ok;
 }
 
@@ -470,8 +468,6 @@ InferenceError InferenceSession::fill_from_scratch(const std::vector<int32_t>& c
     if (effective_ids.size() > static_cast<size_t>(capacity)) {
         effective_ids.erase(effective_ids.begin(), effective_ids.end() - target);
     }
-    self_kv_.zero_();
-    fill_kv_.zero_();
     history_ids_.clear();
     current_seqlen_ = 0;
     history_seqlen_ = 0;
@@ -591,7 +587,6 @@ void InferenceSession::sync_from_context(context::Context& context) {
     }
     current_seqlen_ = context.current_seqlen();
     history_seqlen_ = context.history_seqlen();
-    fill_kv_.zero_();
     if (history_seqlen_ > 0) {
         fill_kv_.copy_batch_slice_from(
             self_kv_, 0, 0, 0, history_seqlen_);
@@ -678,10 +673,8 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
     }
     const bool has_history = history_seqlen_ > 0;
     if (!has_history) {
-        // Every position from a previous cross-attention generation is dirty
-        // when there is no causal history and must not be read by this run.
-        self_kv_.zero_();
-        fill_kv_.zero_();
+        // The first decoding step overwrites position zero and causal masks
+        // hide every dirty future position, so stale cache data is harmless.
         current_seqlen_ = 0;
         refresh_state();
     }
