@@ -397,6 +397,11 @@ target_link_libraries(streaming_benchmark_demo_capi PRIVATE phono_core_shared)
 set_target_properties(streaming_benchmark_demo_capi PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${PHONO_RUNTIME_OUTPUT_DIR}")
 
+add_executable(performance_benchmark apps/performance_benchmark.cpp)
+target_link_libraries(performance_benchmark PRIVATE phono_core)
+set_target_properties(performance_benchmark PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${PHONO_RUNTIME_OUTPUT_DIR}")
+
 add_executable(ime_demo_capi apps/ime_demo_capi.cpp)
 target_link_libraries(ime_demo_capi PRIVATE phono_core_shared)
 set_target_properties(ime_demo_capi PROPERTIES

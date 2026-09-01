@@ -160,6 +160,17 @@ Run the C-ABI demo after downloading the model:
 results/streaming_benchmark_demo_capi phonop2c_v2_0_base_model
 ```
 
+For repeatable performance measurements without interactive I/O, run the CSV
+benchmark with a model package, iteration count and warmup count:
+
+```
+results/performance_benchmark phonop2c_v2_0_alpha_05_base_model 20 5
+```
+
+It reports model-load RSS and latency, individual pre/post method latency,
+generation across several history/window lengths, and one-token incremental
+fill latency. Setup and cache initialization are outside each timed sample.
+
 The program reads one unseparated pinyin window per line from stdin, e.g. nihao, and segments it with phono_tokenizer_separate_greedy; use a single quote to explicitly hint a boundary, e.g. ni'hao. Each window uses InferenceSession::generate for B-way beam search; after a candidate is committed, the next fill incrementally pre-fills only the new strictly-causal history. The core_config is loaded from the package's core_configs/default.json, and a custom JSON file can be passed as the second command-line argument; when a parameter does not fit the model (for example the beam or the context length exceeds a model limit), the program prints the error enum code and exits.
 
 For real-time editing with left/right movement and backspace/delete, run:
