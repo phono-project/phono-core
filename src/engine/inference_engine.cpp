@@ -142,17 +142,24 @@ InferenceEngine::InferenceEngine(const std::string& package_root)
     }
 
     using executorch::runtime::Tag;
-    validate_method(*pre_module_, config_.runtime.pre_pass1_method,
-                    {Tag::Tensor, Tag::Tensor, Tag::Tensor, Tag::Bool},
-                    {Tag::Tensor, Tag::Tensor});
+    auto pre1_meta = pre_module_->method_meta(config_.runtime.pre_pass1_method);
+    auto pre2_meta = pre_module_->method_meta(config_.runtime.pre_pass2_method);
+    pre_pass1_cache_only_ = pre1_meta->num_inputs() == 5 && pre1_meta->num_outputs() == 1;
+    if (pre_pass1_cache_only_) {
+        validate_method(*pre_module_, config_.runtime.pre_pass1_method,
+                        {Tag::Tensor, Tag::Tensor, Tag::Tensor, Tag::Bool, Tag::Bool},
+                        {Tag::Tensor});
+    } else {
+        validate_method(*pre_module_, config_.runtime.pre_pass1_method,
+                        {Tag::Tensor, Tag::Tensor, Tag::Tensor, Tag::Bool},
+                        {Tag::Tensor, Tag::Tensor});
+    }
     validate_method(*pre_module_, config_.runtime.pre_pass2_method,
                     {Tag::Tensor, Tag::Tensor, Tag::Tensor, Tag::Tensor,
                      Tag::Tensor, Tag::Tensor, Tag::Tensor, Tag::Bool},
                     {Tag::Tensor, Tag::Tensor});
     validate_method(*post_module_, config_.runtime.post_method,
                     {Tag::Tensor}, {Tag::Tensor, Tag::Tensor});
-    auto pre1_meta = pre_module_->method_meta(config_.runtime.pre_pass1_method);
-    auto pre2_meta = pre_module_->method_meta(config_.runtime.pre_pass2_method);
     pre_pass1_batch_size_ = method_batch_size(*pre1_meta, 0);
     pre_pass2_batch_size_ = method_batch_size(*pre2_meta, 0);
 
@@ -201,6 +208,9 @@ InferenceError InferenceEngine::run_pre_pass1(const std::vector<int32_t>& input_
         EValue(*position),
         EValue(true),
     };
+    if (pre_pass1_cache_only_) {
+        inputs.emplace_back(false);
+    }
     auto result = pre_module_->execute(config_.runtime.pre_pass1_method, inputs);
     return runtime_error_to_status(result.error());
 }

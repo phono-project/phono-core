@@ -103,6 +103,7 @@ private:
     std::unique_ptr<executorch::extension::Module> post_module_;
     int32_t pre_pass1_batch_size_ = 0;
     int32_t pre_pass2_batch_size_ = 0;
+    bool pre_pass1_cache_only_ = false;
 };
 
 // A stateless inference driver. No context is bound at construction time:

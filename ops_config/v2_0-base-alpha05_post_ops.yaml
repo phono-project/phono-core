@@ -26,23 +26,21 @@ et_kernel_metadata:
   aten::mul.Scalar_out:
   - v1/6;0,1,2,3|6;0,1,2,3|6;0,1,2,3
   aten::split_with_sizes_copy.out:
-  - v1/6;0,1,2|6;0,1,2|6;0,1,2
   - v1/6;0,1,2,3|6;0,1,2,3|6;0,1,2,3
+  - v1/6;0,1,2|6;0,1,2|6;0,1,2
   aten::sym_size.int:
   - v1/4;0,1
   aten::unsqueeze_copy.out:
-  - v1/6;0,1|6;0,1,2|6;0,1,2
   - v1/6;0,1,2|6;0,1,2,3|6;0,1,2,3
+  - v1/6;0,1|6;0,1,2|6;0,1,2
   aten::where.self_out:
   - v1/11;0,1,2,3|6;0,1,2,3|6;0,1,2,3|6;0,1,2,3|6;0,1,2,3
   dim_order_ops::_to_dim_order_copy.out:
   - v1/4;0|6;0|6;0
   executorch_prim::et_view.default:
+  - v1/6;0|6;0,1
   - v1/6;0,1,2,3|6;0,1,2
   - v1/6;0,1,2|6;0,1,2,3
-  - v1/6;0|6;0,1
-  executorch_prim::mul.Scalar:
-  - v1
 include_all_non_op_selectives: false
 include_all_operators: false
 kernel_metadata: {}
@@ -150,12 +148,6 @@ operators:
     is_root_operator: true
     is_used_for_training: true
   executorch_prim::et_view.default:
-    debug_info:
-    - v2_0-base-alpha05-post
-    include_all_overloads: false
-    is_root_operator: true
-    is_used_for_training: true
-  executorch_prim::mul.Scalar:
     debug_info:
     - v2_0-base-alpha05-post
     include_all_overloads: false
