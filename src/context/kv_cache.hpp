@@ -75,6 +75,9 @@ struct PersistentTensor {
     void restore_batch_slice(int32_t batch, int32_t start, int32_t length,
                              const std::vector<float_t>& values);
     void shift_batch_tokens(int32_t batch, int32_t discarded, int32_t retained);
+    void reorder_batch_slice(const std::vector<int32_t>& parent_batches,
+                             int32_t start, int32_t length,
+                             std::vector<float_t>& scratch);
     void reorder_batches(const std::vector<int32_t>& parent_batches);
 };
 

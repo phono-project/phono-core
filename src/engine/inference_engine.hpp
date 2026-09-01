@@ -178,6 +178,7 @@ private:
     core::CoreConfig core_config_;
     context::PersistentTensor fill_kv_;
     context::PersistentTensor self_kv_;
+    std::vector<float_t> reorder_scratch_;
     std::vector<int32_t> history_ids_;
     int32_t beam_size_ = 1;
     int32_t current_seqlen_ = 0;

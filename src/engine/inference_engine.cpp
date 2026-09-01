@@ -834,7 +834,12 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
             next_beams[static_cast<size_t>(beam)].score = expansion.score;
             next_beams[static_cast<size_t>(beam)].pred_ids.push_back(expansion.token);
         }
-        self_kv_.reorder_batches(parents);
+        // Committed history is identical for every beam. Only the locally
+        // causal generation suffix can differ and therefore needs reordering.
+        const int32_t recursive_start = history_seqlen_;
+        const int32_t recursive_length = position - recursive_start + 1;
+        self_kv_.reorder_batch_slice(
+            parents, recursive_start, recursive_length, reorder_scratch_);
         beams = std::move(next_beams);
         current_seqlen_ = position + 1;
         refresh_state();

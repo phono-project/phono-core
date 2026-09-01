@@ -211,6 +211,17 @@ void run(const Options& options) {
     print_result("kv_reorder_full", 0, cfg.pre_model.max_seqlen, options.iterations,
                  reorder_stats);
 
+    std::vector<float_t> reorder_scratch;
+    const int32_t reorder_delta_length = std::min(8, cfg.pre_model.max_seqlen);
+    const Statistics reorder_delta_stats = measure(
+        options.warmups, options.iterations, []() {},
+        [&]() {
+            cache_microbenchmark.reorder_batch_slice(
+                parents, 0, reorder_delta_length, reorder_scratch);
+        });
+    print_result("kv_reorder_delta", 0, reorder_delta_length, options.iterations,
+                 reorder_delta_stats);
+
     phono::context::ContextManager manager(cfg, 1, core);
     phono::context::Context& context = manager.get_context_by_id(0);
     phono::engine::InferenceSession session(*engine, core);

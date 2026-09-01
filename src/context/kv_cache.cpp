@@ -212,38 +212,51 @@ void PersistentTensor::shift_batch_tokens(int32_t batch, int32_t discarded,
     }
 }
 
-void PersistentTensor::reorder_batches(const std::vector<int32_t>& parent_batches) {
+void PersistentTensor::reorder_batch_slice(const std::vector<int32_t>& parent_batches,
+                                           int32_t start, int32_t length,
+                                           std::vector<float_t>& scratch) {
     check_cache_shape(*this);
     if (parent_batches.size() != static_cast<size_t>(shape[2])) {
-        throw std::invalid_argument("PersistentTensor::reorder_batches: wrong batch count");
+        throw std::invalid_argument("PersistentTensor::reorder_batch_slice: wrong batch count");
     }
     for (int32_t parent : parent_batches) {
         if (parent < 0 || parent >= shape[2]) {
-            throw std::out_of_range("PersistentTensor::reorder_batches: parent out of bounds");
+            throw std::out_of_range("PersistentTensor::reorder_batch_slice: parent out of bounds");
         }
     }
+    if (start < 0 || length < 0 || start + length > shape[3]) {
+        throw std::out_of_range("PersistentTensor::reorder_batch_slice: range out of bounds");
+    }
+    if (length == 0) return;
 
+    const int64_t token_stride = token_stride_elements();
     const int64_t batch_stride = batch_stride_elements();
-    const size_t beam_bytes = static_cast<size_t>(batch_stride) * sizeof(float_t);
-    std::vector<float_t> snapshot(parent_batches.size() * static_cast<size_t>(batch_stride));
+    const size_t slice_elements = static_cast<size_t>(length * token_stride);
+    const size_t slice_bytes = slice_elements * sizeof(float_t);
+    scratch.resize(parent_batches.size() * slice_elements);
     for (int32_t layer = 0; layer < shape[0]; ++layer) {
         for (int32_t kv = 0; kv < 2; ++kv) {
             const int64_t layer_offset =
                 (static_cast<int64_t>(layer) * 2 + kv) * shape[2] * batch_stride;
             for (size_t dst = 0; dst < parent_batches.size(); ++dst) {
                 const float_t* src = data() + layer_offset +
-                                     static_cast<int64_t>(parent_batches[dst]) * batch_stride;
-                std::memcpy(snapshot.data() + dst * static_cast<size_t>(batch_stride), src,
-                            beam_bytes);
+                                     static_cast<int64_t>(parent_batches[dst]) * batch_stride +
+                                     static_cast<int64_t>(start) * token_stride;
+                std::memcpy(scratch.data() + dst * slice_elements, src, slice_bytes);
             }
             for (size_t dst = 0; dst < parent_batches.size(); ++dst) {
                 float_t* target = data() + layer_offset +
-                                  static_cast<int64_t>(dst) * batch_stride;
-                std::memcpy(target, snapshot.data() + dst * static_cast<size_t>(batch_stride),
-                            beam_bytes);
+                                  static_cast<int64_t>(dst) * batch_stride +
+                                  static_cast<int64_t>(start) * token_stride;
+                std::memcpy(target, scratch.data() + dst * slice_elements, slice_bytes);
             }
         }
     }
+}
+
+void PersistentTensor::reorder_batches(const std::vector<int32_t>& parent_batches) {
+    std::vector<float_t> scratch;
+    reorder_batch_slice(parent_batches, 0, max_seqlen(), scratch);
 }
 
 }  // namespace phono::context

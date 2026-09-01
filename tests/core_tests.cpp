@@ -158,6 +158,20 @@ void test_cache_slice_operations() {
     cache.reorder_batches({1, 0});
     check(cache.data()[1] == 3.0f, "reorder should preserve selected beam");
     check(cache.data()[8 + 1] == 3.0f, "reorder should preserve selected beam");
+
+    // Slice reordering supports duplicated parents while preserving both the
+    // committed history before the slice and dirty future positions after it.
+    for (int32_t batch = 0; batch < 2; ++batch) {
+        for (int32_t pos = 0; pos < 8; ++pos) {
+            cache.data()[batch * 8 + pos] = static_cast<float>(10 * batch + pos);
+        }
+    }
+    std::vector<float_t> reorder_scratch;
+    cache.reorder_batch_slice({1, 1}, 2, 3, reorder_scratch);
+    check(cache.data()[0] == 0.0f, "slice reorder must preserve history");
+    check(cache.data()[2] == 12.0f, "slice reorder should select parent data");
+    check(cache.data()[8 + 4] == 14.0f, "slice reorder should duplicate a parent");
+    check(cache.data()[5] == 5.0f, "slice reorder must preserve dirty future data");
 }
 
 void test_context_auto_matching() {
