@@ -343,7 +343,7 @@ InferenceSession::InferenceSession(InferenceEngine& engine)
     : InferenceSession(engine, core::default_core_config(engine.config())) {}
 
 InferenceSession::InferenceSession(InferenceEngine& engine, const core::CoreConfig& core_config)
-    : engine_(engine), core_config_(core_config) {
+    : engine_(engine), core_config_(core_config), beam_size_(core_config.beam_size) {
     if (core_config_.beam_size <= 0) {
         throw std::invalid_argument("InferenceSession: core_config.beam_size must be positive");
     }

@@ -59,6 +59,8 @@ void run(const std::string& package_root) {
     phono::context::ContextManager manager(cfg, 1, core);
     phono::context::Context* slot = &manager.get_context_by_id(0);
     phono::engine::InferenceSession session(engine, core);
+    check(session.beam_size() == core.beam_size,
+          "a new session should report its configured beam width before first use");
 
     // --- stateless fill + generate ---
     const std::vector<int32_t> pinyin = tokenizer.encode_pinyin({"ni", "hao"});
