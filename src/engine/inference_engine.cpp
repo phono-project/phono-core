@@ -443,6 +443,12 @@ InferenceError InferenceSession::fill_incremental(const std::vector<int32_t>& ne
                   input_ids.begin() + static_cast<size_t>(batch) * new_ids.size());
     }
     context::PersistentTensor& prefill_cache = input_batch == 1 ? fill_kv_ : self_kv_;
+    if (input_batch == 1 && history_seqlen_ > 0) {
+        // A session may move between Context slots. Synchronize the clean
+        // causal prefix only when pass 1 will actually consume it; generation
+        // itself reads self_kv_ and should not pay for this copy.
+        fill_kv_.copy_batch_slice_from(self_kv_, 0, 0, 0, history_seqlen_);
+    }
     const InferenceError error = engine_.run_pre_pass1(
         input_ids, prefill_cache, history_seqlen_, input_batch);
     if (error != InferenceError::Ok) {
@@ -587,10 +593,6 @@ void InferenceSession::sync_from_context(context::Context& context) {
     }
     current_seqlen_ = context.current_seqlen();
     history_seqlen_ = context.history_seqlen();
-    if (history_seqlen_ > 0) {
-        fill_kv_.copy_batch_slice_from(
-            self_kv_, 0, 0, 0, history_seqlen_);
-    }
 }
 
 void InferenceSession::sync_to_context(context::Context& context) {
