@@ -144,6 +144,14 @@ Because the vcpkg configuration, the CMake generator and the compiler toolchain 
 results/streaming_benchmark_demo_capi phonop2c_v2_0_base_model
 ```
 
+如需排除交互输入并进行可重复的性能测量，可向 CSV 基准程序传入模型包、采样次数和预热次数：
+
+```
+results/performance_benchmark phonop2c_v2_0_alpha_05_base_model 20 5
+```
+
+该程序报告模型加载耗时与 RSS、pre/post 各方法耗时、不同历史及拼音窗口长度下的生成耗时、单 token 增量 fill 耗时，以及 KV 清零、全量/增量 beam 重排和 session reset 的微基准。每个计时样本之前的输入构造、上下文填充和缓存初始化不计入样本耗时。
+
 程序从 stdin 读取一行连续拼音窗口，例如 nihao，并通过 phono_tokenizer_separate_greedy 自动切分；可使用单引号显式提示边界，例如 ni'hao。每个窗口通过 InferenceSession::generate 执行 B 路 beam search；提交候选后下一次 fill 只对新增的严格因果历史做增量预填充。core_config 由程序从模型包的 core_configs/default.json 加载，也支持以第二个命令行参数传入自定义的 JSON 文件；当参数不符合模型限制（例如 beam 或上下文最大长度超出模型极限）时，程序打印错误枚举代码并退出。
 
 模拟实时输入法编辑，可以运行：
