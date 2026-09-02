@@ -229,9 +229,9 @@ void run(const Options& options) {
         options.warmups, options.iterations, []() {},
         [&]() { require_ok(session.reset(context), "session reset"); });
     print_result("session_reset", 0, 0, options.iterations, reset_stats);
-    for (int32_t history_length : std::vector<int32_t>{0, 16, 64}) {
+    for (int32_t history_length : std::vector<int32_t>{0, 16, 30, 64}) {
         const std::vector<int32_t> history(static_cast<size_t>(history_length), context_id);
-        for (int32_t pinyin_length : std::vector<int32_t>{1, 2, 4, 8}) {
+        for (int32_t pinyin_length : std::vector<int32_t>{1, 2, 4, 8, 16, 30}) {
             const std::vector<int32_t> pinyin = pinyin_prefix(tokenizer, pinyin_length);
             const Statistics stats = measure(
                 options.warmups, options.iterations,
