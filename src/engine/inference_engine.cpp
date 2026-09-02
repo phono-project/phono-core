@@ -159,7 +159,7 @@ InferenceEngine::InferenceEngine(const std::string& package_root)
                      Tag::Tensor, Tag::Tensor, Tag::Tensor, Tag::Bool},
                     {Tag::Tensor, Tag::Tensor});
     validate_method(*post_module_, config_.runtime.post_method,
-                    {Tag::Tensor}, {Tag::Tensor, Tag::Tensor});
+                    {Tag::Tensor}, {Tag::Tensor, Tag::Tensor, Tag::Tensor});
     pre_pass1_batch_size_ = method_batch_size(*pre1_meta, 0);
     pre_pass2_batch_size_ = method_batch_size(*pre2_meta, 0);
 
@@ -223,10 +223,12 @@ InferenceError InferenceEngine::run_pre_pass2(const std::vector<int32_t>& input_
                                               DecoderModelOutput& output) const {
     const int32_t batch_size = static_cast<int32_t>(input_ids.size());
     if (batch_size <= 0 || !all_equal(current_seqlen) ||
-        post.sequence_length <= 0 || post.hidden_dim <= 0 || post.projection_size <= 0 ||
+        post.sequence_length <= 0 || post.hidden_dim <= 0 || post.candidate_width <= 0 ||
         post.batch_size != 1 ||
         post.hidden.size() != static_cast<size_t>(post.sequence_length) * post.hidden_dim ||
-        post.logits_mask.size() != static_cast<size_t>(post.sequence_length) * post.projection_size ||
+        post.candidate_ids.size() !=
+            static_cast<size_t>(post.sequence_length) * post.candidate_width ||
+        post.candidate_mask.size() != post.candidate_ids.size() ||
         cross_q_pos_start < 0 || cross_q_pos_start >= post.sequence_length) {
         return InferenceError::InvalidArgument;
     }
@@ -238,15 +240,26 @@ InferenceError InferenceEngine::run_pre_pass2(const std::vector<int32_t>& input_
     std::vector<int64_t> position_data{current_seqlen.front()};
     std::vector<float> hidden_data(
         static_cast<size_t>(batch_size) * post.hidden.size());
-    std::vector<uint8_t> mask_data(static_cast<size_t>(batch_size) * post.projection_size);
+    std::vector<int64_t> candidate_ids;
+    std::vector<int32_t> mapped_candidate_ids;
     for (int32_t batch = 0; batch < batch_size; ++batch) {
         std::copy(post.hidden.begin(), post.hidden.end(),
                   hidden_data.begin() + static_cast<size_t>(batch) * post.hidden.size());
-        std::copy(post.logits_mask.begin() +
-                      static_cast<size_t>(cross_q_pos_start) * post.projection_size,
-                  post.logits_mask.begin() +
-                      static_cast<size_t>(cross_q_pos_start + 1) * post.projection_size,
-                  mask_data.begin() + static_cast<size_t>(batch) * post.projection_size);
+    }
+    const size_t candidate_start =
+        static_cast<size_t>(cross_q_pos_start) * post.candidate_width;
+    candidate_ids.reserve(static_cast<size_t>(post.candidate_width));
+    mapped_candidate_ids.reserve(static_cast<size_t>(post.candidate_width));
+    for (int32_t index = 0; index < post.candidate_width; ++index) {
+        if (post.candidate_mask[candidate_start + static_cast<size_t>(index)] == 0) {
+            continue;
+        }
+        const int32_t id = post.candidate_ids[candidate_start + static_cast<size_t>(index)];
+        candidate_ids.push_back(id);
+        mapped_candidate_ids.push_back(id);
+    }
+    if (candidate_ids.empty()) {
+        return InferenceError::NoCandidates;
     }
     int64_t post_position_offset = 1;
     int64_t query_position = cross_q_pos_start;
@@ -262,9 +275,9 @@ InferenceError InferenceEngine::run_pre_pass2(const std::vector<int32_t>& input_
                                        ScalarType::Long);
     auto query_offset = make_tensor_ptr(std::vector<int32_t>{}, &query_position,
                                         ScalarType::Long);
-    auto mask = make_tensor_ptr(
-        std::vector<int32_t>{batch_size, 1, post.projection_size},
-        mask_data.data(), ScalarType::Bool);
+    auto candidates = make_tensor_ptr(
+        std::vector<int32_t>{static_cast<int32_t>(candidate_ids.size())},
+        candidate_ids.data(), ScalarType::Long);
 
     std::vector<EValue> inputs = {
         EValue(*input),
@@ -273,7 +286,7 @@ InferenceError InferenceEngine::run_pre_pass2(const std::vector<int32_t>& input_
         EValue(*hidden),
         EValue(*post_offset),
         EValue(*query_offset),
-        EValue(*mask),
+        EValue(*candidates),
         EValue(true),
     };
     auto result = pre_module_->execute(config_.runtime.pre_pass2_method, inputs);
@@ -290,6 +303,10 @@ InferenceError InferenceEngine::run_pre_pass2(const std::vector<int32_t>& input_
     output.batch_size = batch_size;
     output.sequence_length = 1;
     output.projection_size = static_cast<int32_t>(sizes[2]);
+    if (output.projection_size != static_cast<int32_t>(candidate_ids.size())) {
+        return InferenceError::ModelError;
+    }
+    output.candidate_ids = std::move(mapped_candidate_ids);
     const float* data = logits.const_data_ptr<float>();
     output.logits.assign(data, data + static_cast<size_t>(batch_size) * sizes[2]);
     return InferenceError::Ok;
@@ -309,32 +326,38 @@ InferenceError InferenceEngine::run_post_model(const std::vector<int32_t>& pinyi
     auto input = make_tensor_ptr(std::vector<int32_t>{1, static_cast<int32_t>(pinyin_ids.size())},
                                  input_data.data(), ScalarType::Long);
     auto result = post_module_->execute(config_.runtime.post_method, {EValue(*input)});
-    if (!result.ok() || result->size() < 2) {
+    if (!result.ok() || result->size() < 3) {
         return result.ok() ? InferenceError::ModelError
                            : runtime_error_to_status(result.error());
     }
 
     const auto& hidden = result->at(0).toTensor();
-    const auto& mask = result->at(1).toTensor();
+    const auto& candidates = result->at(1).toTensor();
+    const auto& mask = result->at(2).toTensor();
     const auto hidden_sizes = hidden.sizes();
+    const auto candidate_sizes = candidates.sizes();
     const auto mask_sizes = mask.sizes();
-    if (hidden_sizes.size() != 3 || mask_sizes.size() != 3 || hidden_sizes[0] != 1 ||
-        mask_sizes[0] != 1 || hidden_sizes[1] != mask_sizes[1]) {
+    if (hidden_sizes.size() != 3 || candidate_sizes.size() != 3 || mask_sizes.size() != 3 ||
+        hidden_sizes[0] != 1 || candidate_sizes[0] != 1 || mask_sizes[0] != 1 ||
+        hidden_sizes[1] != candidate_sizes[1] || candidate_sizes != mask_sizes) {
         return InferenceError::ModelError;
     }
 
     output.batch_size = 1;
     output.sequence_length = static_cast<int32_t>(hidden_sizes[1]);
     output.hidden_dim = static_cast<int32_t>(hidden_sizes[2]);
-    output.projection_size = static_cast<int32_t>(mask_sizes[2]);
+    output.candidate_width = static_cast<int32_t>(candidate_sizes[2]);
     const float* hidden_data = hidden.const_data_ptr<float>();
     output.hidden.assign(hidden_data,
                          hidden_data + static_cast<size_t>(output.sequence_length) * output.hidden_dim);
+    const int64_t* candidate_data = candidates.const_data_ptr<int64_t>();
     const bool* mask_data = mask.const_data_ptr<bool>();
-    output.logits_mask.resize(
-        static_cast<size_t>(output.sequence_length) * output.projection_size);
-    for (size_t i = 0; i < output.logits_mask.size(); ++i) {
-        output.logits_mask[i] = mask_data[i] ? 1 : 0;
+    const size_t candidate_count =
+        static_cast<size_t>(output.sequence_length) * output.candidate_width;
+    output.candidate_ids.assign(candidate_data, candidate_data + candidate_count);
+    output.candidate_mask.resize(candidate_count);
+    for (size_t i = 0; i < candidate_count; ++i) {
+        output.candidate_mask[i] = mask_data[i] ? 1 : 0;
     }
     return InferenceError::Ok;
 }
@@ -748,7 +771,8 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
     std::vector<BeamResult> beams(static_cast<size_t>(beam_size_));
     for (int32_t beam = 0; beam < beam_size_; ++beam) {
         beams[static_cast<size_t>(beam)].score = first_tokens[static_cast<size_t>(beam)].log_prob;
-        beams[static_cast<size_t>(beam)].pred_ids.push_back(first_tokens[static_cast<size_t>(beam)].id);
+        beams[static_cast<size_t>(beam)].pred_ids.push_back(
+            decoder.candidate_ids[static_cast<size_t>(first_tokens[static_cast<size_t>(beam)].id)]);
     }
     current_seqlen_ = has_history ? history_seqlen_ : 1;
     refresh_state();
@@ -804,7 +828,8 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
                 decoder.projection_size, beam_size_);
             for (const auto& token : tokens) {
                 expansions.push_back(Expansion{
-                    beams[static_cast<size_t>(parent)].score + token.log_prob, parent, token.id});
+                    beams[static_cast<size_t>(parent)].score + token.log_prob, parent,
+                    decoder.candidate_ids[static_cast<size_t>(token.id)]});
             }
         }
         if (static_cast<int32_t>(expansions.size()) < beam_size_) {

@@ -49,15 +49,17 @@ struct GenerateResult {
 
 struct PostModelOutput {
     std::vector<float> hidden;
-    std::vector<uint8_t> logits_mask;
+    std::vector<int32_t> candidate_ids;
+    std::vector<uint8_t> candidate_mask;
     int32_t batch_size = 0;
     int32_t sequence_length = 0;
     int32_t hidden_dim = 0;
-    int32_t projection_size = 0;
+    int32_t candidate_width = 0;
 };
 
 struct DecoderModelOutput {
     std::vector<float> logits;
+    std::vector<int32_t> candidate_ids;
     int32_t batch_size = 0;
     int32_t sequence_length = 0;
     int32_t projection_size = 0;

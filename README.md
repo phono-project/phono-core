@@ -58,7 +58,7 @@ The code is organized into four subdirectories — src/core, src/algo, src/conte
 
 - config.json — 模型与运行配置，含 common、pre_model、post_model、vocabs、decoding、runtime 六节
 - bins/pre_model.pte — v2 多方法前段解码器（pre_model_pass1 / pre_model_pass2），维护 B 路 self-KV Cache
-- bins/post_model.pte — 后段拼音编码器，输出 hidden states 与 logits mask
+- bins/post_model.pte — 后段拼音编码器，输出 hidden states 与定宽候选 ID 表
 - vocabs/chinese_vocab.txt — 汉字词表（预测输出空间）
 - vocabs/context_vocab.txt — 上下文词表（含特殊符号，如 bos_token）
 - vocabs/pinyin_vocab.txt — 拼音音节词表（模型输入）
@@ -79,7 +79,7 @@ A model package is a self-contained directory; InferenceEngine is constructed wi
 
 - config.json — model and runtime config, in six sections: common, pre_model, post_model, vocabs, decoding, runtime
 - bins/pre_model.pte — the v2 multi-method decoder (pre_model_pass1 / pre_model_pass2) with a B-wide self-KV cache
-- bins/post_model.pte — the pinyin encoder, returning hidden states and a logits mask
+- bins/post_model.pte — the pinyin encoder, returning hidden states and a bounded candidate-ID table
 - vocabs/chinese_vocab.txt — the Chinese-character vocabulary (prediction output space)
 - vocabs/context_vocab.txt — the context vocabulary (including special tokens such as bos_token)
 - vocabs/pinyin_vocab.txt — the pinyin-syllable vocabulary (model input)
