@@ -32,6 +32,8 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 option(PHONO_USE_INSTALLED_EXECUTORCH
        "Use a pre-built+installed ExecuTorch via find_package() instead of add_subdirectory()" OFF)
+option(PHONO_XNNPACK_WEIGHT_CACHE
+       "Share XNNPACK packed weights across delegates" ON)
 
 set(EXECUTORCH_SOURCE_DIR "${CMAKE_SOURCE_DIR}/third_party/executorch" CACHE PATH
     "Path to an ExecuTorch source checkout, used when PHONO_USE_INSTALLED_EXECUTORCH=OFF")
@@ -200,6 +202,8 @@ else()
   set(EXECUTORCH_BUILD_EXTENSION_DATA_LOADER ON CACHE BOOL "" FORCE)
   set(EXECUTORCH_BUILD_EXTENSION_NAMED_DATA_MAP ON CACHE BOOL "" FORCE)
   set(EXECUTORCH_BUILD_XNNPACK ON CACHE BOOL "" FORCE)
+  set(EXECUTORCH_XNNPACK_ENABLE_WEIGHT_CACHE ${PHONO_XNNPACK_WEIGHT_CACHE}
+      CACHE BOOL "" FORCE)
   set(EXECUTORCH_BUILD_KERNELS_LLM OFF CACHE BOOL "" FORCE)
   set(EXECUTORCH_BUILD_PYBIND OFF CACHE BOOL "" FORCE)
   # phono-core ships its own demo executables, so skip ExecuTorch's

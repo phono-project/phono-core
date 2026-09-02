@@ -102,7 +102,7 @@ The v2 model requires the pre program to expose pre_model_pass1 and pre_model_pa
 - pixi run config — 配置 CMake 构建
 - pixi run build — 增量编译
 
-配置阶段可在 CMake 缓存中覆写两个选项：PHONO_USE_INSTALLED_EXECUTORCH 指定使用独立安装的 ExecuTorch（需同时设置 CMAKE_PREFIX_PATH）；EXECUTORCH_SOURCE_DIR 指定 ExecuTorch 源码路径（默认 third_party/executorch）。可执行文件与共享库默认输出到 results/ 目录。
+配置阶段可在 CMake 缓存中覆写选项：PHONO_USE_INSTALLED_EXECUTORCH 指定使用独立安装的 ExecuTorch（需同时设置 CMAKE_PREFIX_PATH）；EXECUTORCH_SOURCE_DIR 指定 ExecuTorch 源码路径（默认 third_party/executorch）；PHONO_XNNPACK_WEIGHT_CACHE 控制 XNNPACK delegate 是否共享 packed weights（默认 ON）。可执行文件与共享库默认输出到 results/ 目录。
 
 ### 选择性编译（算子裁剪）
 
@@ -123,7 +123,7 @@ Prerequisites: the pixi environment and vcpkg. uni-algo and nlohmann-json are de
 - pixi run config — configures the CMake build
 - pixi run build — incremental build
 
-At configure time, two CMake cache variables can be overridden: PHONO_USE_INSTALLED_EXECUTORCH selects a separately installed ExecuTorch (set CMAKE_PREFIX_PATH accordingly), and EXECUTORCH_SOURCE_DIR points to the ExecuTorch source (default third_party/executorch). Executables and the shared library are output to results/ by default.
+At configure time, CMake cache variables can be overridden: PHONO_USE_INSTALLED_EXECUTORCH selects a separately installed ExecuTorch (set CMAKE_PREFIX_PATH accordingly), EXECUTORCH_SOURCE_DIR points to the ExecuTorch source (default third_party/executorch), and PHONO_XNNPACK_WEIGHT_CACHE controls packed-weight sharing across XNNPACK delegates (default ON). Executables and the shared library are output to results/ by default.
 
 ### Selective build (operator pruning)
 
