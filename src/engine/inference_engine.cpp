@@ -132,7 +132,7 @@ InferenceEngine::InferenceEngine(const std::string& package_root)
         pre_methods->count(config_.runtime.pre_pass1_method) == 0 ||
         pre_methods->count(config_.runtime.pre_pass2_method) == 0) {
         throw std::runtime_error(
-            "InferenceEngine: pre model does not contain configured v2 methods");
+            "InferenceEngine: pre model does not contain configured v2.1 methods");
     }
 
     auto post_methods = post_module_->method_names();

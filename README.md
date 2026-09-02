@@ -71,7 +71,7 @@ v2 模型可以通过 huggingface-cli 下载：
 hf download afirelily/phonop2c_v2_0_alpha_05_base_model --local-dir ./phonop2c_v2_0_base_model
 ```
 
-该 v2 模型要求 pre 程序包含 pre_model_pass1 与 pre_model_pass2 两个方法，并要求 post 方法名为 post_model；模型包的 config.json 中 model_format_version 为 2。请勿使用早期的 v1 模型包，v1 包缺少上述方法，无法被 v2 引擎加载。
+v2.1 模型要求 pre 程序包含 pre_model_pass1 与 pre_model_pass2 两个方法，并要求 post 方法名为 post_model；模型包的 config.json 中 model_format_version 必须是字符串 `"2.1"`。该格式不兼容 v2 及更早的模型包。
 
 ## Model Package
 
@@ -92,7 +92,7 @@ Download the v2 model with huggingface-cli:
 hf download afirelily/phonop2c_v2_0_alpha_05_base_model --local-dir ./phonop2c_v2_0_base_model
 ```
 
-The v2 model requires the pre program to expose pre_model_pass1 and pre_model_pass2 and the post method to be named post_model; model_format_version is 2 in the package's config.json. Do not use earlier v1 packages — they lack the required methods and cannot be loaded by the v2 engine.
+The v2.1 model requires the pre program to expose pre_model_pass1 and pre_model_pass2 and the post method to be named post_model. `model_format_version` must be the string `"2.1"`; this format is intentionally incompatible with v2 and earlier packages.
 
 ## 构建与运行
 

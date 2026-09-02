@@ -131,6 +131,8 @@ struct RuntimeParams {
 // Top level configuration struct.
 class ModelPackageConfig {
 public:
+    static constexpr const char* kSupportedFormatVersion = "2.1";
+
     // Loads and validates `<package_root>/config.json`.
     static ModelPackageConfig load(const std::string& package_root);
 
@@ -145,7 +147,7 @@ public:
     RuntimeParams runtime;
 
     std::string model_version = "";
-    int32_t model_format_version = 0;
+    std::string model_format_version;
 
     std::string package_root;
 };

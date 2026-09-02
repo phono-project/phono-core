@@ -74,7 +74,7 @@ public:
     const core::ModelPackageConfig& config() const { return config_; }
     const core::Tokenizer& tokenizer() const { return tokenizer_; }
 
-    // These methods execute the v2 exported methods. They return the runtime
+    // These methods execute the v2.1 exported methods. They return the runtime
     // error instead of throwing so session methods can report a stable code.
     InferenceError run_pre_pass1(const std::vector<int32_t>& input_ids,
                                  context::PersistentTensor& self_kv,

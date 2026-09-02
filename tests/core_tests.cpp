@@ -283,6 +283,27 @@ void test_core_config_default_and_parse() {
           "legacy N/T values must not leak into the parsed config");
 }
 
+void test_model_format_version() {
+    const auto dir = std::filesystem::temp_directory_path() / "phono_core_format_test";
+    std::filesystem::create_directories(dir);
+
+    write_file(dir / "config.json", R"({"model_format_version":"2.1"})");
+    const auto valid = phono::core::ModelPackageConfig::load(dir.string());
+    check(valid.model_format_version == "2.1", "v2.1 string format should load");
+
+    for (const std::string& value : {"2", "\"2.0\"", "null"}) {
+        write_file(dir / "config.json", "{\"model_format_version\":" + value + "}");
+        bool rejected = false;
+        try {
+            static_cast<void>(phono::core::ModelPackageConfig::load(dir.string()));
+        } catch (const std::exception&) {
+            rejected = true;
+        }
+        check(rejected, "non-v2.1 model format should be rejected");
+    }
+    std::filesystem::remove_all(dir);
+}
+
 nlohmann::json to_json(const phono::core::CoreConfig& config) {
     return {
         {"beam_size", config.beam_size},
@@ -367,6 +388,7 @@ int main() {
     test_cache_slice_operations();
     test_context_auto_matching();
     test_core_config_default_and_parse();
+    test_model_format_version();
     test_core_config_validation();
     return 0;
 }
