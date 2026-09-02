@@ -21,7 +21,7 @@ A typical call sequence is:
 | PHONO_INVALID_ARGUMENT | invalid argument (null pointer, negative length, out-of-range id, ...) |
 | PHONO_CONTEXT_LIMIT_EXCEEDED | context exceeds the pre model's hard cap |
 | PHONO_PINYIN_LIMIT_EXCEEDED | pinyin window exceeds max_pinyin_length or the post hard limit |
-| PHONO_NO_CANDIDATES | not enough candidates to fill the beam |
+| PHONO_NO_CANDIDATES | no valid candidate exists at the current inference step |
 | PHONO_CANCELLED | the callback requested an abort; cursors were rolled back |
 | PHONO_MODEL_ERROR | model load or execution failure |
 | PHONO_CONFIG_ERROR | core_config failed to parse or a parameter exceeds a model limit |

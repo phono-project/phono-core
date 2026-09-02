@@ -156,6 +156,7 @@ public:
     // first, and the pinyin window is capped at max_pinyin_length. On
     // cancellation the generation cursors are rolled back so the context is
     // left at its committed history state (the KV cache is not rewound).
+    // Successful results contain up to beam_size() finite-score candidates.
     GenerateResult generate(context::Context& context,
                             const std::vector<int32_t>& pinyin_ids,
                             const std::vector<int32_t>& context_ids = {},

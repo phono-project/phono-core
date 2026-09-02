@@ -806,7 +806,7 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
 
     const std::vector<TokenScore> first_tokens = top_tokens(decoder.logits, 0,
                                                             decoder.projection_size, beam_size_);
-    if (static_cast<int32_t>(first_tokens.size()) < beam_size_) {
+    if (first_tokens.empty()) {
         result.error = InferenceError::NoCandidates;
         refresh_state();
         return result;
@@ -814,10 +814,23 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
 
     std::vector<BeamResult> beams(static_cast<size_t>(beam_size_));
     for (int32_t beam = 0; beam < beam_size_; ++beam) {
-        beams[static_cast<size_t>(beam)].score = first_tokens[static_cast<size_t>(beam)].log_prob;
+        // Pass 2 keeps its fixed batch width; inactive lanes carry a valid token
+        // with -inf score and are removed from the public result.
+        const bool active = beam < static_cast<int32_t>(first_tokens.size());
+        const TokenScore& token = first_tokens[static_cast<size_t>(
+            active ? beam : beam % static_cast<int32_t>(first_tokens.size()))];
+        beams[static_cast<size_t>(beam)].score =
+            active ? token.log_prob : -std::numeric_limits<double>::infinity();
         beams[static_cast<size_t>(beam)].pred_ids.push_back(
-            decoder.candidate_ids[static_cast<size_t>(first_tokens[static_cast<size_t>(beam)].id)]);
+            decoder.candidate_ids[static_cast<size_t>(token.id)]);
     }
+    const auto remove_inactive = [](std::vector<BeamResult>& candidates) {
+        candidates.erase(
+            std::remove_if(candidates.begin(), candidates.end(), [](const BeamResult& beam) {
+                return !std::isfinite(beam.score);
+            }),
+            candidates.end());
+    };
     current_seqlen_ = has_history ? history_seqlen_ : 1;
     refresh_state();
 
@@ -825,6 +838,7 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
         if (cancelled(cancellation, cancellation_user_data)) {
             rollback_generation_cursor();
             result.error = InferenceError::Cancelled;
+            remove_inactive(beams);
             result.beams = std::move(beams);
             refresh_state();
             return result;
@@ -849,6 +863,7 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
         if (cancelled(cancellation, cancellation_user_data)) {
             rollback_generation_cursor();
             result.error = InferenceError::Cancelled;
+            remove_inactive(beams);
             result.beams = std::move(beams);
             refresh_state();
             return result;
@@ -877,7 +892,7 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
                     decoder.candidate_ids[static_cast<size_t>(token.id)]});
             }
         }
-        if (static_cast<int32_t>(expansions.size()) < beam_size_) {
+        if (expansions.empty()) {
             rollback_generation_cursor();
             result.error = InferenceError::NoCandidates;
             refresh_state();
@@ -910,6 +925,7 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
         refresh_state();
     }
 
+    remove_inactive(beams);
     for (auto& beam : beams) {
         beam.decoded = engine_.tokenizer().ids_to_text(beam.pred_ids);
     }
