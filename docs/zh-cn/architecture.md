@@ -4,7 +4,7 @@
 
 推理引擎由两段模型组成：
 
-- 前段模型：处理中文上下文，维护 B 路自注意力 KV 缓存，导出两个方法。pre_model_pass1 用于对严格因果历史做增量预填充；pre_model_pass2 用于在已填充的历史之上生成候选字符。缓存张量的形状为 [层数, 2, B, 前段最大长度, 头数, 头维度]。
+- 前段模型：pre_model_pass1 增量预填充严格因果历史；pre_model_cross_kv 以 batch 1 预计算各层的 pre-RoPE cross-KV；pre_model_pass2 广播该 KV 完成 B 路生成。self-KV 形状为 [层数, 2, B, 前段最大长度, 头数, 头维度]。
 - 后段模型：把拼音序列编码为隐藏状态与定宽候选 ID 表。运行时删除 padding 后只对真实候选执行 lm_head，并把稀疏列号映射回汉字词表 ID。输入长度受 config.json 中 post_model.max_seqlen 限制。
 
 ## 无状态会话与上下文槽位

@@ -125,6 +125,7 @@ struct RuntimeParams {
     std::string post_model_path = "bins/post_model.pte";
     std::string pre_pass1_method = "pre_model_pass1";
     std::string pre_pass2_method = "pre_model_pass2";
+    std::string pre_cross_kv_method = "pre_model_cross_kv";
     std::string post_method = "post_model";
 };
 

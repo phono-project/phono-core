@@ -156,6 +156,18 @@ void run(const Options& options) {
         print_result("post_model", 0, length, options.iterations, stats);
     }
 
+    for (int32_t length : sequence_lengths) {
+        const std::vector<int32_t> pinyin = pinyin_prefix(tokenizer, length);
+        phono::engine::PostModelOutput post;
+        require_ok(engine->run_post_model(pinyin, post), "post_model setup");
+        phono::engine::CrossKvOutput output;
+        const Statistics stats = measure(
+            options.warmups, options.iterations, []() {}, [&]() {
+                require_ok(engine->run_pre_cross_kv(post, output), "pre_model_cross_kv");
+            });
+        print_result("pre_model_cross_kv", 0, length, options.iterations, stats);
+    }
+
     const int32_t pre1_batch = engine->pre_pass1_batch_size();
     if (pre1_batch <= 0) throw std::runtime_error("pre pass1 has no fixed representative batch");
     phono::context::PersistentTensor pre1_cache = phono::context::make_zero_persistent_tensor(
@@ -180,12 +192,15 @@ void run(const Options& options) {
         const std::vector<int32_t> pinyin = pinyin_prefix(tokenizer, length);
         phono::engine::PostModelOutput post;
         require_ok(engine->run_post_model(pinyin, post), "post_model setup");
+        phono::engine::CrossKvOutput cross_kv;
+        require_ok(engine->run_pre_cross_kv(post, cross_kv), "pre cross-KV setup");
         phono::engine::DecoderModelOutput output;
         const std::vector<int32_t> input(static_cast<size_t>(pre2_batch), context_id);
         const std::vector<int32_t> positions(static_cast<size_t>(pre2_batch), 0);
         const Statistics stats = measure(
             options.warmups, options.iterations, [&]() { pre2_cache.zero_(); }, [&]() {
-                require_ok(engine->run_pre_pass2(input, pre2_cache, positions, post, 0, output),
+                require_ok(engine->run_pre_pass2(
+                               input, pre2_cache, positions, post, cross_kv, 0, output),
                            "pre_model_pass2");
             });
         print_result("pre_model_pass2", 0, length, options.iterations, stats);

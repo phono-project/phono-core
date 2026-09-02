@@ -18,8 +18,8 @@ et_kernel_metadata:
   aten::full_like.out:
   - v1/6;0,1,2,3|6;0,1,2,3|6;0,1,2,3
   aten::index.Tensor_out:
-  - v1/11;0,1|4;0,1|11;0,1,2|11;0,1,2
   - v1/4;0,1|4;0,1|4;0,1,2|4;0,1,2
+  - v1/11;0,1|4;0,1|11;0,1,2|11;0,1,2
   aten::logical_not.out:
   - v1/11;0,1,2,3|11;0,1,2,3|11;0,1,2,3
   aten::mean.out:
@@ -32,16 +32,16 @@ et_kernel_metadata:
   aten::sym_size.int:
   - v1/4;0,1
   aten::unsqueeze_copy.out:
-  - v1/6;0,1|6;0,1,2|6;0,1,2
   - v1/6;0,1,2|6;0,1,2,3|6;0,1,2,3
+  - v1/6;0,1|6;0,1,2|6;0,1,2
   aten::where.self_out:
   - v1/11;0,1,2,3|6;0,1,2,3|6;0,1,2,3|6;0,1,2,3|6;0,1,2,3
   dim_order_ops::_to_dim_order_copy.out:
   - v1/4;0|6;0|6;0
   executorch_prim::et_view.default:
   - v1/6;0,1,2|6;0,1,2,3
-  - v1/6;0,1,2,3|6;0,1,2
   - v1/6;0|6;0,1
+  - v1/6;0,1,2,3|6;0,1,2
 include_all_non_op_selectives: false
 include_all_operators: false
 kernel_metadata: {}

@@ -130,7 +130,8 @@ InferenceEngine::InferenceEngine(const std::string& package_root)
     auto pre_methods = pre_module_->method_names();
     if (!pre_methods.ok() ||
         pre_methods->count(config_.runtime.pre_pass1_method) == 0 ||
-        pre_methods->count(config_.runtime.pre_pass2_method) == 0) {
+        pre_methods->count(config_.runtime.pre_pass2_method) == 0 ||
+        pre_methods->count(config_.runtime.pre_cross_kv_method) == 0) {
         throw std::runtime_error(
             "InferenceEngine: pre model does not contain configured v2.1 methods");
     }
@@ -158,6 +159,8 @@ InferenceEngine::InferenceEngine(const std::string& package_root)
                     {Tag::Tensor, Tag::Tensor, Tag::Tensor, Tag::Tensor,
                      Tag::Tensor, Tag::Tensor, Tag::Tensor, Tag::Bool},
                     {Tag::Tensor, Tag::Tensor});
+    validate_method(*pre_module_, config_.runtime.pre_cross_kv_method,
+                    {Tag::Tensor}, {Tag::Tensor});
     validate_method(*post_module_, config_.runtime.post_method,
                     {Tag::Tensor}, {Tag::Tensor, Tag::Tensor, Tag::Tensor});
     pre_pass1_batch_size_ = method_batch_size(*pre1_meta, 0);
@@ -171,6 +174,11 @@ InferenceEngine::InferenceEngine(const std::string& package_root)
     err = pre_module_->load_method(config_.runtime.pre_pass2_method);
     if (err != executorch::runtime::Error::Ok) {
         throw std::runtime_error("InferenceEngine: failed to load pre pass 2 (error " +
+                                 runtime_error_message(err) + ")");
+    }
+    err = pre_module_->load_method(config_.runtime.pre_cross_kv_method);
+    if (err != executorch::runtime::Error::Ok) {
+        throw std::runtime_error("InferenceEngine: failed to load pre cross-KV method (error " +
                                  runtime_error_message(err) + ")");
     }
     err = post_module_->load_method(config_.runtime.post_method);
@@ -219,6 +227,7 @@ InferenceError InferenceEngine::run_pre_pass2(const std::vector<int32_t>& input_
                                               context::PersistentTensor& self_kv,
                                               const std::vector<int32_t>& current_seqlen,
                                               const PostModelOutput& post,
+                                              const CrossKvOutput& cross_kv,
                                               int32_t cross_q_pos_start,
                                               DecoderModelOutput& output) const {
     const int32_t batch_size = static_cast<int32_t>(input_ids.size());
@@ -229,6 +238,9 @@ InferenceError InferenceEngine::run_pre_pass2(const std::vector<int32_t>& input_
         post.candidate_ids.size() !=
             static_cast<size_t>(post.sequence_length) * post.candidate_width ||
         post.candidate_mask.size() != post.candidate_ids.size() ||
+        cross_kv.sequence_length != post.sequence_length ||
+        cross_kv.values.size() != static_cast<size_t>(config_.pre_model.mhsa_layers) * 2 *
+            post.sequence_length * config_.post_model.mhca_attn_dim ||
         cross_q_pos_start < 0 || cross_q_pos_start >= post.sequence_length) {
         return InferenceError::InvalidArgument;
     }
@@ -238,14 +250,8 @@ InferenceError InferenceEngine::run_pre_pass2(const std::vector<int32_t>& input_
 
     std::vector<int64_t> input_data(input_ids.begin(), input_ids.end());
     std::vector<int64_t> position_data{current_seqlen.front()};
-    std::vector<float> hidden_data(
-        static_cast<size_t>(batch_size) * post.hidden.size());
     std::vector<int64_t> candidate_ids;
     std::vector<int32_t> mapped_candidate_ids;
-    for (int32_t batch = 0; batch < batch_size; ++batch) {
-        std::copy(post.hidden.begin(), post.hidden.end(),
-                  hidden_data.begin() + static_cast<size_t>(batch) * post.hidden.size());
-    }
     const size_t candidate_start =
         static_cast<size_t>(cross_q_pos_start) * post.candidate_width;
     candidate_ids.reserve(static_cast<size_t>(post.candidate_width));
@@ -268,9 +274,10 @@ InferenceError InferenceEngine::run_pre_pass2(const std::vector<int32_t>& input_
                                  ScalarType::Long);
     auto position = make_tensor_ptr(std::vector<int32_t>{1}, position_data.data(),
                                     ScalarType::Long);
-    auto hidden = make_tensor_ptr(
-        std::vector<int32_t>{batch_size, post.sequence_length, post.hidden_dim},
-        hidden_data.data(), ScalarType::Float);
+    auto cross = make_tensor_ptr(
+        {config_.pre_model.mhsa_layers, 2, 1, post.sequence_length,
+         config_.post_model.mhca_heads, config_.post_model.cross_head_dim()},
+        const_cast<float*>(cross_kv.values.data()), ScalarType::Float);
     auto post_offset = make_tensor_ptr(std::vector<int32_t>{}, &post_position_offset,
                                        ScalarType::Long);
     auto query_offset = make_tensor_ptr(std::vector<int32_t>{}, &query_position,
@@ -283,7 +290,7 @@ InferenceError InferenceEngine::run_pre_pass2(const std::vector<int32_t>& input_
         EValue(*input),
         EValue(*self_kv.tensor),
         EValue(*position),
-        EValue(*hidden),
+        EValue(*cross),
         EValue(*post_offset),
         EValue(*query_offset),
         EValue(*candidates),
@@ -309,6 +316,35 @@ InferenceError InferenceEngine::run_pre_pass2(const std::vector<int32_t>& input_
     output.candidate_ids = std::move(mapped_candidate_ids);
     const float* data = logits.const_data_ptr<float>();
     output.logits.assign(data, data + static_cast<size_t>(batch_size) * sizes[2]);
+    return InferenceError::Ok;
+}
+
+InferenceError InferenceEngine::run_pre_cross_kv(const PostModelOutput& post,
+                                                 CrossKvOutput& output) const {
+    if (post.batch_size != 1 || post.sequence_length <= 0 || post.hidden_dim <= 0 ||
+        post.hidden.size() != static_cast<size_t>(post.sequence_length) * post.hidden_dim) {
+        return InferenceError::InvalidArgument;
+    }
+    auto hidden = make_tensor_ptr(
+        {1, post.sequence_length, post.hidden_dim},
+        const_cast<float*>(post.hidden.data()), ScalarType::Float);
+    auto result = pre_module_->execute(
+        config_.runtime.pre_cross_kv_method, {EValue(*hidden)});
+    if (!result.ok() || result->size() != 1) {
+        return result.ok() ? InferenceError::ModelError
+                           : runtime_error_to_status(result.error());
+    }
+    const auto& tensor = result->at(0).toTensor();
+    const auto sizes = tensor.sizes();
+    if (sizes.size() != 6 || sizes[0] != config_.pre_model.mhsa_layers || sizes[1] != 2 ||
+        sizes[2] != 1 || sizes[3] != post.sequence_length ||
+        sizes[4] != config_.post_model.mhca_heads ||
+        sizes[5] != config_.post_model.cross_head_dim()) {
+        return InferenceError::ModelError;
+    }
+    const float* data = tensor.const_data_ptr<float>();
+    output.sequence_length = post.sequence_length;
+    output.values.assign(data, data + tensor.numel());
     return InferenceError::Ok;
 }
 
@@ -711,6 +747,13 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
         refresh_state();
         return result;
     }
+    CrossKvOutput cross_kv;
+    error = engine_.run_pre_cross_kv(post, cross_kv);
+    if (error != InferenceError::Ok) {
+        result.error = error;
+        refresh_state();
+        return result;
+    }
 
     const int32_t max_pre = cfg.pre_model.max_seqlen;
     const int32_t first_position = has_history ? history_seqlen_ - 1 : 0;
@@ -739,7 +782,8 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
                                                        ? first_cache.snapshot_batch_slice(0, first_position, 1)
                                                        : std::vector<float>();
     DecoderModelOutput decoder;
-    error = engine_.run_pre_pass2(first_input, first_cache, first_positions, post, 0, decoder);
+    error = engine_.run_pre_pass2(
+        first_input, first_cache, first_positions, post, cross_kv, 0, decoder);
     if (has_history) {
         for (int32_t batch = 0; batch < first_batch; ++batch) {
             first_cache.restore_batch_slice(batch, first_position, 1, clean_history_last);
@@ -800,7 +844,8 @@ GenerateResult InferenceSession::generate_impl(const std::vector<int32_t>& pinyi
         }
         const int32_t position = has_history ? history_seqlen_ + step - 1 : step;
         std::vector<int32_t> positions(static_cast<size_t>(beam_size_), position);
-        error = engine_.run_pre_pass2(input_ids, self_kv_, positions, post, step, decoder);
+        error = engine_.run_pre_pass2(
+            input_ids, self_kv_, positions, post, cross_kv, step, decoder);
         if (cancelled(cancellation, cancellation_user_data)) {
             rollback_generation_cursor();
             result.error = InferenceError::Cancelled;

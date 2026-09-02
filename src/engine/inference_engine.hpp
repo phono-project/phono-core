@@ -65,6 +65,11 @@ struct DecoderModelOutput {
     int32_t projection_size = 0;
 };
 
+struct CrossKvOutput {
+    std::vector<float> values;
+    int32_t sequence_length = 0;
+};
+
 class InferenceEngine {
 public:
     explicit InferenceEngine(const std::string& package_root);
@@ -87,8 +92,12 @@ public:
                                  context::PersistentTensor& self_kv,
                                  const std::vector<int32_t>& current_seqlen,
                                  const PostModelOutput& post,
+                                 const CrossKvOutput& cross_kv,
                                  int32_t cross_q_pos_start,
                                  DecoderModelOutput& output) const;
+
+    InferenceError run_pre_cross_kv(const PostModelOutput& post,
+                                    CrossKvOutput& output) const;
 
     InferenceError run_post_model(const std::vector<int32_t>& pinyin_ids,
                                   PostModelOutput& output) const;

@@ -112,4 +112,4 @@ Windows 上 CMake 会定义 NOMINMAX 与 WIN32_LEAN_AND_MEAN，避免 windows.h 
 
 - ExecuTorch 克隆失败：检查网络与代理设置，删除 third_party/executorch 后重试 pixi run setup。
 - zh2Hans codegen 失败：确认在 pixi 环境中运行 pixi run config（配置期会调用 Python3 执行 codegen/zh2hans_codegen.py）；也可直接运行 `python codegen/zh2hans_codegen.py --input res/zh2hans.json --output src/gen/zh2hansdict.h` 复现。
-- 模型加载失败：模型包必须是 v2.1 格式（config.json 中 model_format_version 为字符串 `"2.1"`，pre 程序包含 pre_model_pass1 与 pre_model_pass2）；v2 及更早格式不受支持。
+- 模型加载失败：模型包必须是 v2.1 格式（model_format_version 为字符串 `"2.1"`，pre 程序包含 pre_model_pass1、pre_model_cross_kv 与 pre_model_pass2）；v2 及更早格式不受支持。

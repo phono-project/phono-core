@@ -57,7 +57,7 @@ The code is organized into four subdirectories — src/core, src/algo, src/conte
 模型包是一个自包含的目录，InferenceEngine 以该目录路径构造：
 
 - config.json — 模型与运行配置，含 common、pre_model、post_model、vocabs、decoding、runtime 六节
-- bins/pre_model.pte — v2 多方法前段解码器（pre_model_pass1 / pre_model_pass2），维护 B 路 self-KV Cache
+- bins/pre_model.pte — v2.1 前段解码器，包含 pre_model_pass1、pre_model_cross_kv 与 pre_model_pass2
 - bins/post_model.pte — 后段拼音编码器，输出 hidden states 与定宽候选 ID 表
 - vocabs/chinese_vocab.txt — 汉字词表（预测输出空间）
 - vocabs/context_vocab.txt — 上下文词表（含特殊符号，如 bos_token）
@@ -71,14 +71,14 @@ v2 模型可以通过 huggingface-cli 下载：
 hf download afirelily/phonop2c_v2_0_alpha_05_base_model --local-dir ./phonop2c_v2_0_base_model
 ```
 
-v2.1 模型要求 pre 程序包含 pre_model_pass1 与 pre_model_pass2 两个方法，并要求 post 方法名为 post_model；模型包的 config.json 中 model_format_version 必须是字符串 `"2.1"`。该格式不兼容 v2 及更早的模型包。
+v2.1 模型要求 pre 程序包含 pre_model_pass1、pre_model_cross_kv 与 pre_model_pass2，并要求 post 方法名为 post_model；模型包的 config.json 中 model_format_version 必须是字符串 `"2.1"`。该格式不兼容 v2 及更早的模型包。
 
 ## Model Package
 
 A model package is a self-contained directory; InferenceEngine is constructed with its path:
 
 - config.json — model and runtime config, in six sections: common, pre_model, post_model, vocabs, decoding, runtime
-- bins/pre_model.pte — the v2 multi-method decoder (pre_model_pass1 / pre_model_pass2) with a B-wide self-KV cache
+- bins/pre_model.pte — the v2.1 decoder with pre_model_pass1, pre_model_cross_kv and pre_model_pass2
 - bins/post_model.pte — the pinyin encoder, returning hidden states and a bounded candidate-ID table
 - vocabs/chinese_vocab.txt — the Chinese-character vocabulary (prediction output space)
 - vocabs/context_vocab.txt — the context vocabulary (including special tokens such as bos_token)
@@ -92,7 +92,7 @@ Download the v2 model with huggingface-cli:
 hf download afirelily/phonop2c_v2_0_alpha_05_base_model --local-dir ./phonop2c_v2_0_base_model
 ```
 
-The v2.1 model requires the pre program to expose pre_model_pass1 and pre_model_pass2 and the post method to be named post_model. `model_format_version` must be the string `"2.1"`; this format is intentionally incompatible with v2 and earlier packages.
+The v2.1 model requires the pre program to expose pre_model_pass1, pre_model_cross_kv and pre_model_pass2, and the post method to be named post_model. `model_format_version` must be the string `"2.1"`; this format is intentionally incompatible with v2 and earlier packages.
 
 ## 构建与运行
 

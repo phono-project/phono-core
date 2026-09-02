@@ -4,7 +4,7 @@
 
 The inference engine is composed of two models:
 
-- The pre model processes the Chinese context and maintains a B-wide self-attention KV cache. It exports two methods: pre_model_pass1 incrementally pre-fills strictly causal history, and pre_model_pass2 generates candidate characters on top of the filled history. The cache tensor has shape [layers, 2, B, pre_max_seqlen, heads, head_dim].
+- The pre model exposes pre_model_pass1 for incremental causal prefill, pre_model_cross_kv for batch-one pre-RoPE cross-KV projection, and pre_model_pass2 for B-wide generation over the broadcast cross-KV. Its self-KV shape is [layers, 2, B, pre_max_seqlen, heads, head_dim].
 - The post model encodes pinyin into hidden states and a bounded candidate-ID table. The runtime removes padding, evaluates lm_head only for real candidates, and maps sparse columns back to Chinese-vocabulary IDs. Input length is bounded by post_model.max_seqlen in config.json.
 
 ## Stateless Session and Context Slots

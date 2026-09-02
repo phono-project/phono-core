@@ -215,6 +215,8 @@ ModelPackageConfig ModelPackageConfig::load(const std::string& package_root) {
         cfg.runtime.post_model_path = get_or<std::string>(r, "post_model_path", cfg.runtime.post_model_path);
         cfg.runtime.pre_pass1_method = get_or<std::string>(r, "pre_pass1_method", cfg.runtime.pre_pass1_method);
         cfg.runtime.pre_pass2_method = get_or<std::string>(r, "pre_pass2_method", cfg.runtime.pre_pass2_method);
+        cfg.runtime.pre_cross_kv_method = get_or<std::string>(
+            r, "pre_cross_kv_method", cfg.runtime.pre_cross_kv_method);
         cfg.runtime.post_method = get_or<std::string>(r, "post_method", cfg.runtime.post_method);
     }
 
