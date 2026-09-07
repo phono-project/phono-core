@@ -65,10 +65,11 @@ The code is organized into four subdirectories — src/core, src/algo, src/conte
 - dict/dict_trie.json — 词典 Trie，供 Viterbi 解码使用（可选）
 - core_configs/default.json — 运行期 core_config：beam、slack_interval、min_accept_context、max_context_length、max_history_length、max_pinyin_length 与槽位淘汰参数
 
-v2 模型可以通过 huggingface-cli 下载：
+v2.1 base 模型提供两种动态量化版本，可根据模型体积与权重精度需求选择：`w4a8` 使用 4-bit 权重、8-bit 激活，包体更小；`w8a8` 使用 8-bit 权重、8-bit 激活，保留更高的权重精度。两者均使用相同的 v2.1 模型包格式与 phono-core 接口。
 
 ```
-hf download afirelily/phonop2c_v2_0_alpha_05_base_model --local-dir ./phonop2c_v2_0_base_model
+hf download afirelily/phonop2c_v2_1_base_w4a8_model --local-dir ./phonop2c_v2_1_base_w4a8_model
+hf download afirelily/phonop2c_v2_1_base_w8a8_model --local-dir ./phonop2c_v2_1_base_w8a8_model
 ```
 
 v2.1 模型要求 pre 程序包含 pre_model_pass1、pre_model_cross_kv 与 pre_model_pass2，并要求 post 方法名为 post_model；模型包的 config.json 中 model_format_version 必须是字符串 `"2.1"`。该格式不兼容 v2 及更早的模型包。
@@ -86,10 +87,11 @@ A model package is a self-contained directory; InferenceEngine is constructed wi
 - dict/dict_trie.json — the dictionary trie, used by Viterbi decoding (optional)
 - core_configs/default.json — the runtime core_config: beam, slack_interval, min_accept_context, max_context_length, max_history_length, max_pinyin_length and slot-eviction parameters
 
-Download the v2 model with huggingface-cli:
+The v2.1 base model is available in two dynamically quantized variants. Choose `w4a8` (4-bit weights and 8-bit activations) for a smaller package, or `w8a8` (8-bit weights and 8-bit activations) for higher weight precision. Both variants use the same v2.1 package format and phono-core interface.
 
 ```
-hf download afirelily/phonop2c_v2_0_alpha_05_base_model --local-dir ./phonop2c_v2_0_base_model
+hf download afirelily/phonop2c_v2_1_base_w4a8_model --local-dir ./phonop2c_v2_1_base_w4a8_model
+hf download afirelily/phonop2c_v2_1_base_w8a8_model --local-dir ./phonop2c_v2_1_base_w8a8_model
 ```
 
 The v2.1 model requires the pre program to expose pre_model_pass1, pre_model_cross_kv and pre_model_pass2, and the post method to be named post_model. `model_format_version` must be the string `"2.1"`; this format is intentionally incompatible with v2 and earlier packages.
@@ -141,13 +143,13 @@ Because the vcpkg configuration, the CMake generator and the compiler toolchain 
 下载模型之后，运行 C-ABI 演示程序：
 
 ```
-results/streaming_benchmark_demo_capi phonop2c_v2_0_base_model
+results/streaming_benchmark_demo_capi phonop2c_v2_1_base_w4a8_model
 ```
 
 如需排除交互输入并进行可重复的性能测量，可向 CSV 基准程序传入模型包、采样次数和预热次数：
 
 ```
-results/performance_benchmark phonop2c_v2_0_alpha_05_base_model 20 5
+results/performance_benchmark phonop2c_v2_1_base_w4a8_model 20 5
 ```
 
 该程序报告模型加载耗时与 RSS、pre/post 各方法耗时、不同历史及拼音窗口长度下的生成耗时、单 token 增量 fill 耗时，以及 KV 清零、全量/增量 beam 重排和 session reset 的微基准。每个计时样本之前的输入构造、上下文填充和缓存初始化不计入样本耗时。
@@ -156,7 +158,7 @@ results/performance_benchmark phonop2c_v2_0_alpha_05_base_model 20 5
 
 模拟实时输入法编辑，可以运行：
 ```
-results/ime_demo_capi phonop2c_v2_0_base_model
+results/ime_demo_capi phonop2c_v2_1_base_w4a8_model
 ```
 程序支持左右移动光标以及 Backspace/Delete 删除；拼音为空时，这些编辑键作用于已确认历史，模型仅接收历史光标之前的内容。此时还可用上下键切换历史，从而测试 ContextManager 的缓存复用；默认创建 2 个上下文，也可通过第三个参数指定数量。切分栏实时显示自动切分结果，下一栏显示当前历史，其余栏显示候选。输入候选编号即可在光标处提交到历史。按 Ctrl-C 退出。
 
@@ -165,14 +167,14 @@ results/ime_demo_capi phonop2c_v2_0_base_model
 Run the C-ABI demo after downloading the model:
 
 ```
-results/streaming_benchmark_demo_capi phonop2c_v2_0_base_model
+results/streaming_benchmark_demo_capi phonop2c_v2_1_base_w4a8_model
 ```
 
 For repeatable performance measurements without interactive I/O, run the CSV
 benchmark with a model package, iteration count and warmup count:
 
 ```
-results/performance_benchmark phonop2c_v2_0_alpha_05_base_model 20 5
+results/performance_benchmark phonop2c_v2_1_base_w4a8_model 20 5
 ```
 
 It reports model-load RSS and latency, individual pre/post method latency,
@@ -184,7 +186,7 @@ The program reads one unseparated pinyin window per line from stdin, e.g. nihao,
 For real-time editing with left/right movement and backspace/delete, run:
 
 ```
-results/ime_demo_capi phonop2c_v2_0_base_model
+results/ime_demo_capi phonop2c_v2_1_base_w4a8_model
 ```
 
 When pinyin is empty, those editing keys operate on committed history, and only the history prefix before the cursor is sent to the model. Up/Down then switches histories to exercise ContextManager cache reuse. Two contexts are created by default; pass a third argument to choose another count. The segmentation bar shows automatic segmentation, the next bar shows the active history, and the remaining bars show candidates after every edit. Type a candidate number to commit it at the cursor. Press Ctrl-C to exit.
