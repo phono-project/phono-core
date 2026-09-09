@@ -27,7 +27,7 @@ CMake 在未显式指定 CMAKE_TOOLCHAIN_FILE 时会自动读取环境变量 VCP
 构建产物默认输出到 results/ 目录，包括：
 
 - libphono_core.so — C-ABI 共享库
-- streaming_benchmark_demo_capi — C-ABI 演示程序
+- cli_demo_capi — C-ABI 智能分词演示程序
 - ime_demo_capi — 交互式 C-ABI 输入法演示程序
 
 ## 选择性编译（算子/精度裁剪）
@@ -112,4 +112,4 @@ Windows 上 CMake 会定义 NOMINMAX 与 WIN32_LEAN_AND_MEAN，避免 windows.h 
 
 - ExecuTorch 克隆失败：检查网络与代理设置，删除 third_party/executorch 后重试 pixi run setup。
 - zh2Hans codegen 失败：确认在 pixi 环境中运行 pixi run config（配置期会调用 Python3 执行 codegen/zh2hans_codegen.py）；也可直接运行 `python codegen/zh2hans_codegen.py --input res/zh2hans.json --output src/gen/zh2hansdict.h` 复现。
-- 模型加载失败：模型包必须是 v2.1 格式（model_format_version 为字符串 `"2.1"`，pre 程序包含 pre_model_pass1、pre_model_cross_kv 与 pre_model_pass2）；v2 及更早格式不受支持。
+- 模型加载失败：模型包必须是 v2.2 格式（`model_format_version` 为字符串 `"2.2"`），pre 程序包含 `pre_model_pass1`、`pre_model_cross_kv` 与 `pre_model_pass2`；声明了 segmenter 时还必须提供对应 PTE 和字符词表。

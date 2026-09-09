@@ -4,11 +4,9 @@
 // as libphono_core.so / phono_core.dll / libphono_core.dylib; see the
 // phono_core_shared CMake target.
 //
-// The runtime core_config is handed to the library as a plain JSON string
-// (the same file that a demo or the package's core_configs/default.json
-// carries). The library parses and validates it internally against the loaded
-// model's hard limits and reports a phono_status error enum instead of
-// crashing when a parameter does not fit.
+// Engine/tokenizer policy and context/session limits are separate versioned
+// JSON documents. The library parses and validates both, reporting a
+// phono_status error enum instead of allowing exceptions across the ABI.
 //
 // A session is stateless: no context is bound at creation and every call
 // takes an explicit phono_context slot, so one session can drive many slots.

@@ -117,7 +117,7 @@ public:
     // meets its minimum length, otherwise checked FMM is used.
     PinyinSegmentationResult segment_pinyin(const std::string& input) const;
 
-    // These methods execute the v2.1 exported methods. They return the runtime
+    // These methods execute the v2.2 exported methods. They return the runtime
     // error instead of throwing so session methods can report a stable code.
     InferenceError run_pre_pass1(const std::vector<int32_t>& input_ids,
                                  context::PersistentTensor& self_kv,

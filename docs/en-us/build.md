@@ -27,7 +27,7 @@ When CMAKE_TOOLCHAIN_FILE is not set explicitly, CMake reads the VCPKG_ROOT envi
 Build artifacts are output to results/ by default:
 
 - libphono_core.so — the C-ABI shared library
-- streaming_benchmark_demo_capi — the C-ABI demo
+- cli_demo_capi — the C-ABI smart-segmentation demo
 - ime_demo_capi — the interactive C-ABI IME demo
 
 ## Selective build (operator/dtype pruning)
@@ -122,4 +122,4 @@ On Windows, CMake defines NOMINMAX and WIN32_LEAN_AND_MEAN to avoid windows.h ma
 
 - ExecuTorch clone fails: check the network and proxy settings, delete third_party/executorch and retry pixi run setup.
 - zh2Hans codegen fails: make sure pixi run config runs inside the pixi environment (the configure step invokes Python3 to run codegen/zh2hans_codegen.py); reproduce with `python codegen/zh2hans_codegen.py --input res/zh2hans.json --output src/gen/zh2hansdict.h`.
-- Model fails to load: the package must use v2.1 (model_format_version is the string `"2.1"`, and pre exposes pre_model_pass1, pre_model_cross_kv and pre_model_pass2); v2 and earlier formats are unsupported.
+- Model fails to load: the package must use v2.2 (`model_format_version` is the string `"2.2"`); pre exposes `pre_model_pass1`, `pre_model_cross_kv`, and `pre_model_pass2`. A declared segmenter must also provide its PTE program and character vocabulary.
