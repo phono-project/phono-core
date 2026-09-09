@@ -17,7 +17,6 @@ public:
     // match may extend beyond end (defaults to text.size()).
     std::vector<size_t> match_lengths(std::string_view text, size_t offset = 0,
                                       size_t end = std::string_view::npos) const;
-    size_t longest_match(std::string_view text, size_t offset = 0) const;
 
 private:
     struct Node {

@@ -50,9 +50,4 @@ std::vector<size_t> Trie::match_lengths(std::string_view text, size_t offset,
     return matches;
 }
 
-size_t Trie::longest_match(std::string_view text, size_t offset) const {
-    const auto matches = match_lengths(text, offset);
-    return matches.empty() ? 0 : matches.back();
-}
-
 }  // namespace phono::algo

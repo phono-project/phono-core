@@ -21,6 +21,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "core/pinyin_normalizer.hpp"
+
 namespace phono::core {
 
 // Errors reported while parsing / validating a runtime core_config against
@@ -38,6 +40,31 @@ enum class CoreConfigError {
 };
 
 const char* core_config_error_name(CoreConfigError error);
+
+enum class SegmentMode { Strict, Safe };
+
+enum class EngineConfigError {
+    Ok = 0,
+    InvalidJson,
+    InvalidTokenizerConfig,
+    InvalidSegmentMode,
+    MaxPinyinCharsInvalid,
+};
+
+const char* engine_config_error_name(EngineConfigError error);
+
+struct TokenizerEngineConfig {
+    PinyinNormalizationConfig normalization;
+    SegmentMode segment_mode = SegmentMode::Safe;
+    bool repair = false;
+    int32_t max_pinyin_chars = 128;
+};
+
+struct EngineConfig {
+    TokenizerEngineConfig tokenizer;
+};
+
+EngineConfigError parse_engine_config(const nlohmann::json& json, EngineConfig& out);
 
 class ModelPackageConfig;  // fwd decl, defined below
 
@@ -80,8 +107,8 @@ struct VocabPaths {
     std::vector<std::string> context_special_tokens = {"bos_token"};
 };
 
-// The on-device runtime (core_config) that drives the inference session and
-// the context slot manager. It is user supplied at runtime (e.g. passed to
+// The context-manager/session runtime config. Engine-wide tokenizer and
+// segmentation policy lives in EngineConfig instead. It is user supplied at runtime (e.g. passed to
 // the C API as a JSON string) and must be validated against the loaded
 // model's hard limits before use.
 //

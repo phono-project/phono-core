@@ -47,6 +47,71 @@ const char* core_config_error_name(CoreConfigError error) {
     return "unknown";
 }
 
+const char* engine_config_error_name(EngineConfigError error) {
+    switch (error) {
+        case EngineConfigError::Ok: return "ok";
+        case EngineConfigError::InvalidJson: return "invalid_json";
+        case EngineConfigError::InvalidTokenizerConfig: return "invalid_tokenizer_config";
+        case EngineConfigError::InvalidSegmentMode: return "invalid_segment_mode";
+        case EngineConfigError::MaxPinyinCharsInvalid: return "max_pinyin_chars_invalid";
+    }
+    return "unknown";
+}
+
+EngineConfigError parse_engine_config(const json& input, EngineConfig& out) {
+    json object;
+    if (input.is_string()) {
+        try {
+            object = json::parse(input.get<std::string>());
+        } catch (...) {
+            return EngineConfigError::InvalidJson;
+        }
+    } else if (input.is_object()) {
+        object = input;
+    } else {
+        return EngineConfigError::InvalidJson;
+    }
+
+    EngineConfig candidate;
+    try {
+        const json tokenizer = object.value("tokenizer", json::object());
+        if (!tokenizer.is_object()) return EngineConfigError::InvalidTokenizerConfig;
+        const json normalization = tokenizer.value("normalization", json::object());
+        if (!normalization.is_object()) return EngineConfigError::InvalidTokenizerConfig;
+
+        candidate.tokenizer.normalization.lowercase_ascii = normalization.value(
+            "lowercase_ascii", candidate.tokenizer.normalization.lowercase_ascii);
+        candidate.tokenizer.normalization.normalize_v_to_u = normalization.value(
+            "normalize_v_to_u", candidate.tokenizer.normalization.normalize_v_to_u);
+        candidate.tokenizer.normalization.separators = normalization.value(
+            "separators", candidate.tokenizer.normalization.separators);
+        candidate.tokenizer.repair = tokenizer.value("repair", candidate.tokenizer.repair);
+        candidate.tokenizer.max_pinyin_chars = tokenizer.value(
+            "max_pinyin_chars", candidate.tokenizer.max_pinyin_chars);
+        const std::string mode = tokenizer.value("segment_mode", std::string("safe"));
+        if (mode == "strict") {
+            candidate.tokenizer.segment_mode = SegmentMode::Strict;
+        } else if (mode == "safe") {
+            candidate.tokenizer.segment_mode = SegmentMode::Safe;
+        } else {
+            return EngineConfigError::InvalidSegmentMode;
+        }
+    } catch (...) {
+        return EngineConfigError::InvalidJson;
+    }
+
+    if (candidate.tokenizer.max_pinyin_chars <= 0) {
+        return EngineConfigError::MaxPinyinCharsInvalid;
+    }
+    const auto& separators = candidate.tokenizer.normalization.separators;
+    if (separators.empty() || separators.find_first_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") !=
+                                  std::string::npos) {
+        return EngineConfigError::InvalidTokenizerConfig;
+    }
+    out = std::move(candidate);
+    return EngineConfigError::Ok;
+}
+
 CoreConfig default_core_config(const ModelPackageConfig& model) {
     CoreConfig cfg;
     cfg.beam_size = model_beam_width(model);

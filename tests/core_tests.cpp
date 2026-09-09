@@ -146,19 +146,14 @@ void test_tokenizer_normalizes_and_skips_unknown() {
     check(tokenizer.encode_context("X").empty(), "unknown context ids should be skipped");
     check(tokenizer.chinese_id_to_context_id(0) == 0, "Chinese/context ids should map");
     check(tokenizer.chinese_id_to_context_id(99) == -1, "unknown Chinese id should fail");
-    check(tokenizer.separate_greedy("woxihuanni") ==
-              std::vector<std::string>({"wo", "xi", "huan", "ni"}),
-          "pinyin should use greedy longest matches");
-    check(tokenizer.separate_greedy("xian") == std::vector<std::string>({"xian"}),
-          "an unbroken pinyin should keep the longest syllable");
-    check(tokenizer.separate_greedy("xi'an") == std::vector<std::string>({"xi", "an"}),
-          "single quotes should force breakpoints");
-    check(tokenizer.separate_greedy("wxhn") ==
-              std::vector<std::string>({"w", "x", "h", "n"}),
-          "jianpin entries should be separated like full syllables");
-    check(tokenizer.separate_greedy("'wo''xi'") ==
-              std::vector<std::string>({"wo", "xi"}),
-          "empty quoted segments should be ignored");
+    check(tokenizer.find_pinyin_id_exact("wo").has_value(),
+          "exact pinyin lookup should find vocabulary entries");
+    check(!tokenizer.find_pinyin_id_exact("invalid").has_value(),
+          "exact pinyin lookup must not silently repair unknown entries");
+    check(tokenizer.find_pinyin_id_nearest("wo") == *tokenizer.find_pinyin_id_exact("wo"),
+          "nearest lookup should preserve exact entries");
+    check(tokenizer.pinyin_trie().contains("xian"),
+          "tokenizer should expose its immutable pinyin trie to segmentation algorithms");
 
     std::filesystem::remove_all(dir);
 }
@@ -442,6 +437,45 @@ void test_core_config_validation() {
           "empty core config should equal default_core_config");
 }
 
+void test_engine_config_parse() {
+    phono::core::EngineConfig config;
+    const nlohmann::json valid = {
+        {"tokenizer", {
+            {"normalization", {
+                {"lowercase_ascii", false},
+                {"normalize_v_to_u", true},
+                {"separators", "' "},
+            }},
+            {"segment_mode", "strict"},
+            {"repair", true},
+            {"max_pinyin_chars", 64},
+        }},
+    };
+    check(phono::core::parse_engine_config(valid, config) ==
+              phono::core::EngineConfigError::Ok,
+          "valid engine config should parse");
+    check(config.tokenizer.segment_mode == phono::core::SegmentMode::Strict &&
+              config.tokenizer.repair && config.tokenizer.max_pinyin_chars == 64 &&
+              !config.tokenizer.normalization.lowercase_ascii,
+          "engine tokenizer options should be preserved");
+
+    auto bad_mode = valid;
+    bad_mode["tokenizer"]["segment_mode"] = "guess";
+    check(phono::core::parse_engine_config(bad_mode, config) ==
+              phono::core::EngineConfigError::InvalidSegmentMode,
+          "unknown segmentation mode should be rejected");
+    auto bad_limit = valid;
+    bad_limit["tokenizer"]["max_pinyin_chars"] = 0;
+    check(phono::core::parse_engine_config(bad_limit, config) ==
+              phono::core::EngineConfigError::MaxPinyinCharsInvalid,
+          "non-positive character limits should be rejected");
+    auto bad_separator = valid;
+    bad_separator["tokenizer"]["normalization"]["separators"] = "a";
+    check(phono::core::parse_engine_config(bad_separator, config) ==
+              phono::core::EngineConfigError::InvalidTokenizerConfig,
+          "letters cannot be configured as separators");
+}
+
 }  // namespace
 
 int main() {
@@ -455,5 +489,6 @@ int main() {
     test_core_config_default_and_parse();
     test_model_format_version();
     test_core_config_validation();
+    test_engine_config_parse();
     return 0;
 }

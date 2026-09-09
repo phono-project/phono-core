@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -36,13 +37,9 @@ public:
     // Unknown codepoints are silently skipped.
     std::vector<int32_t> encode_context(const std::string& text_utf8) const;
 
-    // Encode a list of pinyin syllables via pinyin_vocab; syllables not in
-    // vocab fall back to the nearest match by edit distance.
-    std::vector<int32_t> encode_pinyin(const std::vector<std::string>& pinyin_list) const;
-
-    // Greedily split unseparated pinyin using the longest vocabulary match.
-    // A single quote forces a syllable boundary and is not included in output.
-    std::vector<std::string> separate_greedy(const std::string& pinyin) const;
+    std::optional<int32_t> find_pinyin_id_exact(std::string_view token) const;
+    int32_t find_pinyin_id_nearest(std::string_view token) const;
+    const algo::Trie& pinyin_trie() const { return pinyin_tree_; }
 
     // Convert a sequence of chinese_vocab ids back into UTF-8 text.
     // Unknown ids are silently skipped.
