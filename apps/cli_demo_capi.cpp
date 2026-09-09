@@ -1,8 +1,8 @@
 // Usage:
-//   streaming_benchmark_demo_capi <model_package_dir> [core_config_json]
+//   cli_demo_capi <model_package_dir> [engine_config_json] [context_manager_json]
 //
 // Drives the engine exclusively through the stable C ABI
-// (interface/phono_api.h). The core_config is handed to the library as a plain
+// (interface/phono_api.h). Runtime configs are handed to the library as plain
 // JSON string; the library parses and validates it internally.
 
 #include <chrono>
@@ -19,6 +19,8 @@
 #include <sstream>
 #include <string>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 
 #ifdef _WIN32
   #include <io.h>
@@ -46,23 +48,16 @@ int cancellation_check(void* user_data) {
     return g_cancelled != 0;
 }
 
-std::string load_core_config(const std::string& package_root,
-                             const std::string& override_path) {
+std::string load_config(const std::string& filename,
+                        const std::string& override_path) {
     std::ifstream in;
-    if (!override_path.empty()) {
-        in.open(override_path);
-    }
-    if (!in.is_open()) {
-        in.open(std::filesystem::path(package_root) / "core_configs/default.json");
-    }
-    if (!in.is_open()) {
-        in.open("core_configs/default.json");
-    }
+    if (!override_path.empty()) in.open(override_path);
+    if (!in.is_open()) in.open(std::filesystem::path("core_configs") / filename);
     std::ostringstream buffer;
     if (in.is_open()) {
         buffer << in.rdbuf();
     } else {
-        buffer << "{}";
+        buffer << "";
     }
     return buffer.str();
 }
@@ -105,9 +100,10 @@ private:
     std::string pending_;
 };
 
-std::string join(char* const* words, int32_t count, const std::string& separator = ", ") {
+std::string join(const std::vector<std::string>& words,
+                 const std::string& separator = ", ") {
     std::string result;
-    for (int32_t i = 0; i < count; ++i) {
+    for (size_t i = 0; i < words.size(); ++i) {
         if (i > 0) result += separator;
         result += words[i];
     }
@@ -123,19 +119,24 @@ int exit_for_status(phono_status status) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        std::cerr << "usage: " << argv[0] << " <model_package_dir> [core_config_json]" << std::endl;
+    if (argc < 2 || argc > 4) {
+        std::cerr << "usage: " << argv[0]
+                  << " <model_package_dir> [engine_config_json] [context_manager_json]"
+                  << std::endl;
         return 2;
     }
 
     std::signal(SIGINT, handle_sigint);
     const std::string package_root = argv[1];
-    const std::string core_config_path = argc > 2 ? argv[2] : std::string();
-    const std::string core_config_json = load_core_config(package_root, core_config_path);
+    const std::string engine_config_json = load_config(
+        "engine_config.json", argc > 2 ? argv[2] : std::string());
+    const std::string context_config_json = load_config(
+        "context_manager.json", argc > 3 ? argv[3] : std::string());
     std::cout << "Loading model package from: " << package_root << std::endl;
 
     phono_engine* engine = nullptr;
-    phono_status status = phono_engine_create(package_root.c_str(), &engine);
+    phono_status status = phono_engine_create(
+        package_root.c_str(), engine_config_json.c_str(), &engine);
     if (status != PHONO_OK) {
         std::cerr << "failed to load engine: " << phono_error_name(status) << " ("
                   << phono_last_error_message() << ")" << std::endl;
@@ -143,7 +144,13 @@ int main(int argc, char** argv) {
     }
 
     phono_context_manager* manager = nullptr;
-    status = phono_context_manager_create(engine, core_config_json.c_str(), 1, &manager);
+    char* engine_info = phono_engine_info_json(engine);
+    if (engine_info != nullptr) {
+        std::cout << "Engine info: " << engine_info << '\n';
+        phono_free(engine_info);
+    }
+
+    status = phono_context_manager_create(engine, context_config_json.c_str(), 1, &manager);
     if (status != PHONO_OK) {
         std::cerr << "failed to create context manager: " << phono_error_name(status) << " ("
                   << phono_last_error_message() << ")" << std::endl;
@@ -152,7 +159,7 @@ int main(int argc, char** argv) {
     }
 
     phono_session* session = nullptr;
-    status = phono_session_create(engine, core_config_json.c_str(), &session);
+    status = phono_session_create(engine, context_config_json.c_str(), &session);
     if (status != PHONO_OK) {
         std::cerr << "failed to create session: " << phono_error_name(status) << " ("
                   << phono_last_error_message() << ")" << std::endl;
@@ -183,30 +190,25 @@ int main(int argc, char** argv) {
         if (reader.next(line) != ReadStatus::Ok) break;
         if (line.empty()) continue;
 
-        char** syllables = nullptr;
-        int32_t syllable_count = 0;
-        status = phono_tokenizer_separate_greedy(engine, line.c_str(), &syllables,
-                                                 &syllable_count);
-        if (status != PHONO_OK) {
+        const std::string request = nlohmann::json{
+            {"schema_version", "1.0"}, {"input", line}}.dump();
+        char* segmentation_json = nullptr;
+        status = phono_engine_segment_pinyin(
+            engine, request.c_str(), &segmentation_json);
+        if (segmentation_json == nullptr) {
             std::cout << "  ! pinyin separation failed: " << phono_error_name(status) << '\n';
-            exit_code = exit_for_status(status);
-            break;
-        }
-        if (syllable_count == 0) {
-            phono_free(syllables);
             continue;
         }
-
-        int32_t* pinyin_ids = nullptr;
-        int32_t pinyin_count = 0;
-        status = phono_tokenizer_encode_pinyin(engine, syllables, syllable_count,
-                                               &pinyin_ids, &pinyin_count);
+        const nlohmann::json segmentation = nlohmann::json::parse(segmentation_json);
+        phono_free(segmentation_json);
         if (status != PHONO_OK) {
-            std::cout << "  ! pinyin encoding failed: " << phono_error_name(status) << '\n';
-            exit_code = exit_for_status(status);
-            phono_free(syllables);
-            break;
+            std::cout << "  ! " << phono_error_name(status)
+                      << ", invalid_ranges=" << segmentation["invalid_ranges"].dump() << '\n';
+            continue;
         }
+        const auto syllables = segmentation.at("segments").get<std::vector<std::string>>();
+        const auto pinyin_ids = segmentation.at("pinyin_ids").get<std::vector<int32_t>>();
+        if (pinyin_ids.empty()) continue;
         int32_t* context_ids = nullptr;
         int32_t context_count = 0;
         status = phono_tokenizer_encode_context(engine, committed_text.c_str(),
@@ -214,8 +216,6 @@ int main(int argc, char** argv) {
         if (status != PHONO_OK) {
             std::cout << "  ! context encoding failed: " << phono_error_name(status) << '\n';
             exit_code = exit_for_status(status);
-            phono_free(syllables);
-            phono_free(pinyin_ids);
             break;
         }
 
@@ -223,14 +223,14 @@ int main(int argc, char** argv) {
 
         phono_generate_result result{};
         const auto start = std::chrono::high_resolution_clock::now();
-        status = phono_session_generate(session, slot, pinyin_ids, pinyin_count,
+        status = phono_session_generate(session, slot, pinyin_ids.data(),
+                                        static_cast<int32_t>(pinyin_ids.size()),
                                         context_ids, context_count, cancellation_check, nullptr,
                                         &result);
         const auto end = std::chrono::high_resolution_clock::now();
         const double elapsed_us =
             std::chrono::duration<double, std::micro>(end - start).count();
         latencies_us.push_back(elapsed_us);
-        phono_free(pinyin_ids);
         phono_free(context_ids);
 
         if (status != PHONO_OK) {
@@ -238,16 +238,16 @@ int main(int argc, char** argv) {
             if (status != PHONO_CANCELLED) {
                 exit_code = exit_for_status(status);
             }
-            phono_free(syllables);
             phono_generate_result_free(&result);
             break;
         }
         ++window_count;
         std::cout << "  context: \"" << committed_text << "\"\n"
-                  << "  pinyin : [" << join(syllables, syllable_count) << "]\n"
+                  << "  route  : " << segmentation.at("strategy").get<std::string>() << '\n'
+                  << "  pinyin : [" << join(syllables) << "]\n"
+                  << "  invalid: " << segmentation.at("invalid_ranges").dump() << '\n'
                   << "  candidates (" << std::fixed << std::setprecision(1) << elapsed_us
                   << " us):\n";
-        phono_free(syllables);
         for (int32_t i = 0; i < result.beam_count; ++i) {
             std::cout << "    [" << i + 1 << "] score=" << std::setprecision(4)
                       << result.beams[i].score << " \"" << result.beams[i].decoded << "\"\n";

@@ -383,7 +383,7 @@ phono_configure_target(phono_core PUBLIC)
 # ═══════════════════════════════════════════════════════════════════════
 # phono_core_shared: the C-ABI shared library (libphono_core.so /
 # phono_core.dll / libphono_core.dylib). Exports the stable C API declared in
-# interface/phono_api.h. core_config is passed in as a JSON string and parsed
+# interface/phono_api.h. Runtime configs are passed as JSON strings and parsed
 # internally; invalid parameters surface as phono_status error enums.
 # ═══════════════════════════════════════════════════════════════════════
 add_library(phono_core_shared SHARED ${PHONO_CORE_SOURCES} interface/phono_api.cpp)
@@ -399,9 +399,9 @@ set_target_properties(phono_core_shared PROPERTIES
 # Demo: links libphono_core.so and talks to it exclusively through the stable
 # C interface.
 # ═══════════════════════════════════════════════════════════════════════
-add_executable(streaming_benchmark_demo_capi apps/streaming_benchmark_demo_capi.cpp)
-target_link_libraries(streaming_benchmark_demo_capi PRIVATE phono_core_shared)
-set_target_properties(streaming_benchmark_demo_capi PROPERTIES
+add_executable(cli_demo_capi apps/cli_demo_capi.cpp)
+target_link_libraries(cli_demo_capi PRIVATE phono_core_shared nlohmann_json::nlohmann_json)
+set_target_properties(cli_demo_capi PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${PHONO_RUNTIME_OUTPUT_DIR}")
 
 add_executable(performance_benchmark apps/performance_benchmark.cpp)
@@ -410,7 +410,7 @@ set_target_properties(performance_benchmark PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${PHONO_RUNTIME_OUTPUT_DIR}")
 
 add_executable(ime_demo_capi apps/ime_demo_capi.cpp)
-target_link_libraries(ime_demo_capi PRIVATE phono_core_shared)
+target_link_libraries(ime_demo_capi PRIVATE phono_core_shared nlohmann_json::nlohmann_json)
 set_target_properties(ime_demo_capi PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${PHONO_RUNTIME_OUTPUT_DIR}")
 
