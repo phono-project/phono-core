@@ -5,10 +5,12 @@
 #include <vector>
 
 #include "algo/trie.hpp"
+#include "algo/pinyin_segment.hpp"
 #include "algo/zh2hans.hpp"
 #include "context/context.hpp"
 #include "core/config.hpp"
 #include "core/text_normalizer.hpp"
+#include "core/pinyin_normalizer.hpp"
 #include "core/tokenizer.hpp"
 
 namespace {
@@ -47,7 +49,7 @@ phono::core::CoreConfig test_core_config() {
     return cfg;
 }
 
-void test_trie_lookup_and_longest_match() {
+void test_trie_lookup_and_all_matches() {
     phono::algo::Trie trie;
     trie.insert("w");
     trie.insert("wo");
@@ -58,10 +60,71 @@ void test_trie_lookup_and_longest_match() {
     check(trie.contains("wo"), "trie should contain inserted words");
     check(!trie.contains("x"), "trie should reject non-terminal prefixes");
     check(!trie.contains(""), "trie should reject the empty word");
-    check(trie.longest_match("woxian", 0) == 2, "trie should choose the longest match");
-    check(trie.longest_match("woxian", 2) == 4, "trie should match from an offset");
-    check(trie.longest_match("unknown") == 0, "trie should report a missing match");
-    check(trie.longest_match("wo", 2) == 0, "trie should reject an end offset");
+    check(trie.match_lengths("woxian", 0) == std::vector<size_t>({1, 2}),
+          "trie should return every terminal match");
+    check(trie.match_lengths("woxian", 2) == std::vector<size_t>({2, 4}),
+          "trie should return every match from an offset");
+    check(trie.match_lengths("xian", 0, 2) == std::vector<size_t>({2}),
+          "trie should respect the caller's end boundary");
+    check(trie.match_lengths("unknown").empty(), "trie should report a missing match");
+    check(trie.match_lengths("wo", 2).empty(), "trie should reject an end offset");
+}
+
+void test_pinyin_normalization() {
+    phono::core::PinyinNormalizationConfig config;
+    const auto normalized = phono::core::normalize_pinyin("Jv'an-LV", config);
+    check(normalized.canonical_input == "juan-lv", "normalizer should lowercase and map jv");
+    check(normalized.forced_boundaries.size() == normalized.canonical_input.size() - 1,
+          "normalizer should align forced boundaries with canonical gaps");
+    check(normalized.forced_boundaries[1], "quote should force the preceding canonical gap");
+    check(normalized.canonical_input.substr(5) == "lv", "lv must retain v");
+    check(normalized.source_offsets[2] == 3, "source offsets should skip separators");
+
+    bool saw_v_to_u = false;
+    bool saw_forced = false;
+    for (const auto& event : normalized.events) {
+        saw_v_to_u = saw_v_to_u || event.type == "v_to_u";
+        saw_forced = saw_forced || event.type == "forced_boundary";
+    }
+    check(saw_v_to_u && saw_forced, "normalizer should report every transformation");
+
+    const auto separated = phono::core::normalize_pinyin("j'v", config);
+    check(separated.canonical_input == "jv", "v/u mapping must not cross a forced boundary");
+}
+
+void test_gap_viterbi_and_checked_fmm() {
+    phono::algo::Trie trie;
+    for (const char* token : {"p", "b", "xi", "an", "xian"}) trie.insert(token);
+
+    const auto pb = phono::algo::decode_gap_viterbi(
+        "pb", trie, {false}, {-100.0f}, true);
+    check(pb.reachable && pb.invalid_char_count == 0 && pb.edges.size() == 2,
+          "a fully legal jianpin path must beat invalid fallback edges");
+
+    const auto pv = phono::algo::decode_gap_viterbi(
+        "pv", trie, {false}, {0.0f}, true);
+    check(pv.reachable && pv.invalid_char_count == 1 && pv.edges.size() == 2 &&
+              pv.edges[1].invalid,
+          "unavoidable invalid characters should remain explicitly marked");
+
+    const auto strict_pv = phono::algo::decode_gap_viterbi(
+        "pv", trie, {false}, {0.0f}, false);
+    check(!strict_pv.reachable, "strict DAG decoding should reject an incomplete path");
+
+    const auto joined = phono::algo::decode_gap_viterbi(
+        "xian", trie, {false, false, false}, {0.0f, -2.0f, 0.0f}, false);
+    check(joined.edges.size() == 1, "negative boundary logits should prefer xian");
+    const auto split = phono::algo::decode_gap_viterbi(
+        "xian", trie, {false, false, false}, {0.0f, 2.0f, 0.0f}, false);
+    check(split.edges.size() == 2 && split.edges[0].end == 2,
+          "positive boundary logits should prefer xi-an");
+    const auto forced = phono::algo::decode_gap_viterbi(
+        "xian", trie, {false, true, false}, {0.0f, -100.0f, 0.0f}, false);
+    check(forced.edges.size() == 2, "forced boundaries must prohibit crossing edges");
+
+    const auto fmm = phono::algo::separate_fmm_checked("xipv", trie, {false, false, false});
+    check(fmm.invalid_char_count == 1 && fmm.edges.back().invalid,
+          "checked FMM must report rather than silently accept invalid characters");
 }
 
 void test_tokenizer_normalizes_and_skips_unknown() {
@@ -382,7 +445,9 @@ void test_core_config_validation() {
 }  // namespace
 
 int main() {
-    test_trie_lookup_and_longest_match();
+    test_trie_lookup_and_all_matches();
+    test_pinyin_normalization();
+    test_gap_viterbi_and_checked_fmm();
     test_tokenizer_normalizes_and_skips_unknown();
     test_zh2hans_simplification();
     test_cache_slice_operations();

@@ -28,24 +28,31 @@ bool Trie::contains(std::string_view word) const {
     return !word.empty() && node->terminal;
 }
 
-size_t Trie::longest_match(std::string_view text, size_t offset) const {
+std::vector<size_t> Trie::match_lengths(std::string_view text, size_t offset,
+                                        size_t end) const {
+    std::vector<size_t> matches;
     if (offset >= text.size()) {
-        return 0;
+        return matches;
     }
+    end = std::min(end, text.size());
 
     const Node* node = &root_;
-    size_t longest = 0;
-    for (size_t i = offset; i < text.size(); ++i) {
+    for (size_t i = offset; i < end; ++i) {
         const auto it = node->children.find(text[i]);
         if (it == node->children.end()) {
             break;
         }
         node = it->second.get();
         if (node->terminal) {
-            longest = i - offset + 1;
+            matches.push_back(i - offset + 1);
         }
     }
-    return longest;
+    return matches;
+}
+
+size_t Trie::longest_match(std::string_view text, size_t offset) const {
+    const auto matches = match_lengths(text, offset);
+    return matches.empty() ? 0 : matches.back();
 }
 
 }  // namespace phono::algo

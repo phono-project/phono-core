@@ -4,6 +4,7 @@
 #include <memory>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 namespace phono::algo {
 
@@ -12,7 +13,10 @@ public:
     void insert(std::string_view word);
     bool contains(std::string_view word) const;
 
-    // Returns the length of the longest word starting at offset, or zero.
+    // Returns every terminal match starting at offset, shortest first. No
+    // match may extend beyond end (defaults to text.size()).
+    std::vector<size_t> match_lengths(std::string_view text, size_t offset = 0,
+                                      size_t end = std::string_view::npos) const;
     size_t longest_match(std::string_view text, size_t offset = 0) const;
 
 private:
