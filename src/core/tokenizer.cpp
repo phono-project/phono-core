@@ -150,7 +150,8 @@ int32_t Tokenizer::find_pinyin_id_nearest(std::string_view token) const {
     int best_dist = std::numeric_limits<int>::max();
     for (size_t i = 0; i < pinyin_list_.size(); ++i) {
         const int distance = edit_distance(std::string(token), pinyin_list_[i]);
-        if (distance < best_dist) {
+        if (best_idx < 0 || distance < best_dist ||
+            (distance == best_dist && pinyin_list_[i] < pinyin_list_[best_idx])) {
             best_dist = distance;
             best_idx = static_cast<int32_t>(i);
         }

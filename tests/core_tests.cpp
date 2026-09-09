@@ -162,6 +162,8 @@ void test_tokenizer_normalizes_and_skips_unknown() {
           "nearest lookup should preserve exact entries");
     check(tokenizer.pinyin_token(*tokenizer.find_pinyin_id_exact("wo")) == "wo",
           "pinyin ids should map back to vocabulary tokens");
+    check(tokenizer.pinyin_token(tokenizer.find_pinyin_id_nearest("v")) == "a",
+          "nearest-token ties should use lexical order for deterministic repair");
     check(tokenizer.pinyin_trie().contains("xian"),
           "tokenizer should expose its immutable pinyin trie to segmentation algorithms");
 
