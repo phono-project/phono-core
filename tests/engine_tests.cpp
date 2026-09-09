@@ -11,6 +11,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -41,10 +42,45 @@ const char* env_or_null(const char* name) {
     return value != nullptr && *value != '\0' ? value : nullptr;
 }
 
+std::vector<int32_t> pinyin_ids(
+    const phono::core::Tokenizer& tokenizer,
+    std::initializer_list<const char*> tokens) {
+    std::vector<int32_t> output;
+    for (const char* token : tokens) {
+        const auto id = tokenizer.find_pinyin_id_exact(token);
+        if (!id) throw std::runtime_error(std::string("missing pinyin token: ") + token);
+        output.push_back(*id);
+    }
+    return output;
+}
+
 void run(const std::string& package_root) {
     phono::engine::InferenceEngine engine(package_root);
     const auto& cfg = engine.config();
     const auto& tokenizer = engine.tokenizer();
+
+    check(engine.smart_segmenter_available(), "v2.2 test package should load its gap scorer");
+    const auto segmented = engine.segment_pinyin("nihaoma");
+    check(segmented.ok() && segmented.segments ==
+              std::vector<std::string>({"ni", "hao", "ma"}),
+          "smart segmenter should decode nihaoma as ni hao ma");
+    const auto short_input = engine.segment_pinyin("pb");
+    check(short_input.ok() && short_input.strategy == "checked_fmm" &&
+              short_input.segments == std::vector<std::string>({"p", "b"}),
+          "two-character input should bypass the scorer and use checked FMM");
+    const auto normalized = engine.segment_pinyin("jvan");
+    check(normalized.ok() && normalized.normalized_input == "juan" &&
+              normalized.segments == std::vector<std::string>({"juan"}),
+          "j/q/x/y + v normalization should produce a legal token");
+    const auto invalid = engine.segment_pinyin("pv");
+    check(invalid.ok() && invalid.normalized_input == "p" &&
+              invalid.invalid_ranges.size() == 1 &&
+              invalid.invalid_ranges.front().begin == 1 &&
+              invalid.invalid_ranges.front().end == 2,
+          "safe mode should delete and locate unavoidable invalid characters");
+    check(engine.segment_pinyin("iiiiii").error ==
+              phono::engine::InferenceError::InvalidPinyin,
+          "safe mode should reject a result that becomes empty");
 
     // A core_config that is valid for any v2 model (pre_max >= 128, post_max
     // >= 32, batch 3) and small enough to exercise windowing quickly.
@@ -63,7 +99,7 @@ void run(const std::string& package_root) {
           "a new session should report its configured beam width before first use");
 
     // --- stateless fill + generate ---
-    const std::vector<int32_t> pinyin = tokenizer.encode_pinyin({"ni", "hao"});
+    const std::vector<int32_t> pinyin = pinyin_ids(tokenizer, {"ni", "hao"});
     check(!pinyin.empty(), "ni hao should encode to pinyin ids");
     check(slot->context_ids_len() == 0, "a fresh slot must start empty");
     phono::engine::GenerateResult first = session.generate(*slot, pinyin);
@@ -74,13 +110,13 @@ void run(const std::string& package_root) {
     check(first.beams[0].decoded == "你好", "expected 'ni hao' to decode to 你好");
 
     // Sparse syllables may expose fewer candidates than the fixed pass-2 batch.
-    const auto shei = tokenizer.encode_pinyin({"shei"});
+    const auto shei = pinyin_ids(tokenizer, {"shei"});
     const auto sparse = session.generate(*slot, shei);
     check(sparse.ok(), "a non-empty sparse candidate set should succeed");
     check(sparse.beams.size() == 1 && sparse.beams[0].decoded == "谁",
           "shei should return its sole finite candidate");
 
-    const auto shei_me = tokenizer.encode_pinyin({"shei", "me"});
+    const auto shei_me = pinyin_ids(tokenizer, {"shei", "me"});
     const auto expanded = session.generate(*slot, shei_me);
     check(expanded.ok(), "a sparse first step should continue recursively");
     check(static_cast<int32_t>(expanded.beams.size()) == session.beam_size(),
@@ -110,7 +146,7 @@ void run(const std::string& package_root) {
     // A second window with explicit full context: the committed history is
     // reused and only the new suffix is generated against.
     const std::vector<int32_t> context2 = tokenizer.encode_context("你好世界");
-    const std::vector<int32_t> pinyin2 = tokenizer.encode_pinyin({"shi", "jie"});
+    const std::vector<int32_t> pinyin2 = pinyin_ids(tokenizer, {"shi", "jie"});
     phono::engine::GenerateResult second =
         session.generate(*slot, pinyin2, context2);
     check(second.ok(), "generate with explicit context should succeed");
@@ -120,7 +156,7 @@ void run(const std::string& package_root) {
     // --- cancellation rolls back the generation cursor ---
     const int32_t committed_history_seqlen = slot->history_seqlen();
     const std::vector<int32_t> long_pinyin =
-        tokenizer.encode_pinyin({"ni", "hao", "shi", "jie"});
+        pinyin_ids(tokenizer, {"ni", "hao", "shi", "jie"});
     CancellationTrigger trigger;
     trigger.max_steps = 0;  // cancel on the very first poll (before any token)
     phono::engine::GenerateResult cancelled =

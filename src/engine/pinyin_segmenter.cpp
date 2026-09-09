@@ -46,7 +46,9 @@ PinyinSegmentScorer::PinyinSegmentScorer(const core::ModelPackageConfig& package
     }
     const auto error = module_->load_method(config_.method);
     if (error != executorch::runtime::Error::Ok) {
-        throw std::runtime_error("PinyinSegmentScorer: failed to load configured method");
+        throw std::runtime_error(
+            "PinyinSegmentScorer: failed to load configured method (error " +
+            std::to_string(static_cast<int>(error)) + ")");
     }
 }
 
