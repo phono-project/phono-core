@@ -125,6 +125,14 @@ void test_gap_viterbi_and_checked_fmm() {
     const auto fmm = phono::algo::separate_fmm_checked("xipv", trie, {false, false, false});
     check(fmm.invalid_char_count == 1 && fmm.edges.back().invalid,
           "checked FMM must report rather than silently accept invalid characters");
+
+    phono::algo::Trie lookahead;
+    for (const char* token : {"a", "ab", "bc"}) lookahead.insert(token);
+    const auto complete = phono::algo::separate_fmm_checked(
+        "abc", lookahead, {false, false});
+    check(complete.invalid_char_count == 0 && complete.edges.size() == 2 &&
+              complete.edges.front().end == 1,
+          "checked FMM must not take a longest prefix that creates an avoidable dead end");
 }
 
 void test_tokenizer_normalizes_and_skips_unknown() {
@@ -152,6 +160,8 @@ void test_tokenizer_normalizes_and_skips_unknown() {
           "exact pinyin lookup must not silently repair unknown entries");
     check(tokenizer.find_pinyin_id_nearest("wo") == *tokenizer.find_pinyin_id_exact("wo"),
           "nearest lookup should preserve exact entries");
+    check(tokenizer.pinyin_token(*tokenizer.find_pinyin_id_exact("wo")) == "wo",
+          "pinyin ids should map back to vocabulary tokens");
     check(tokenizer.pinyin_trie().contains("xian"),
           "tokenizer should expose its immutable pinyin trie to segmentation algorithms");
 
@@ -308,6 +318,7 @@ void test_core_config_default_and_parse() {
 
     // The new core_config key names supersede the old N / T.
     const nlohmann::json options = {
+        {"schema_version", "1.0"},
         {"beam_size", 2},
         {"slack_interval", 1},
         {"min_accept_context", 2},
@@ -326,6 +337,7 @@ void test_core_config_default_and_parse() {
 
     // Legacy N / T keys must no longer configure anything.
     const nlohmann::json legacy = {
+        {"schema_version", "1.0"},
         {"beam_size", 2}, {"N", 1}, {"T", 2},
         {"max_context_length", 15}, {"max_history_length", 10}, {"max_pinyin_length", 3},
     };
@@ -345,11 +357,11 @@ void test_model_format_version() {
     const auto dir = std::filesystem::temp_directory_path() / "phono_core_format_test";
     std::filesystem::create_directories(dir);
 
-    write_file(dir / "config.json", R"({"model_format_version":"2.1"})");
+    write_file(dir / "config.json", R"({"model_format_version":"2.2"})");
     const auto valid = phono::core::ModelPackageConfig::load(dir.string());
-    check(valid.model_format_version == "2.1", "v2.1 string format should load");
+    check(valid.model_format_version == "2.2", "v2.2 JSON format should load");
 
-    for (const std::string& value : {"2", "\"2.0\"", "null"}) {
+    for (const std::string& value : {"2", "\"2.1\"", "null"}) {
         write_file(dir / "config.json", "{\"model_format_version\":" + value + "}");
         bool rejected = false;
         try {
@@ -357,13 +369,14 @@ void test_model_format_version() {
         } catch (const std::exception&) {
             rejected = true;
         }
-        check(rejected, "non-v2.1 model format should be rejected");
+        check(rejected, "non-v2.2 model format should be rejected");
     }
     std::filesystem::remove_all(dir);
 }
 
 nlohmann::json to_json(const phono::core::CoreConfig& config) {
     return {
+        {"schema_version", "1.0"},
         {"beam_size", config.beam_size},
         {"slack_interval", config.slack_interval},
         {"min_accept_context", config.min_accept_context},
@@ -430,16 +443,15 @@ void test_core_config_validation() {
               phono::core::CoreConfigError::InvalidJson,
           "malformed JSON string should be rejected");
     check(phono::core::parse_core_config(
-              nlohmann::json::object({}), cfg, out) == phono::core::CoreConfigError::Ok,
-          "empty core config should fall back to model-derived defaults");
-    check(out.beam_size == phono::core::default_core_config(cfg).beam_size &&
-              out.max_history_length == phono::core::default_core_config(cfg).max_history_length,
-          "empty core config should equal default_core_config");
+              nlohmann::json::object({}), cfg, out) ==
+              phono::core::CoreConfigError::UnsupportedSchemaVersion,
+          "unversioned core config should be rejected");
 }
 
 void test_engine_config_parse() {
     phono::core::EngineConfig config;
     const nlohmann::json valid = {
+        {"schema_version", "1.0"},
         {"tokenizer", {
             {"normalization", {
                 {"lowercase_ascii", false},

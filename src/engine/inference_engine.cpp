@@ -7,6 +7,8 @@
 
 #include <executorch/extension/tensor/tensor.h>
 
+#include "algo/pinyin_segment.hpp"
+
 namespace phono::engine {
 
 using executorch::aten::ScalarType;
@@ -115,6 +117,7 @@ const char* inference_error_name(InferenceError error) {
         case InferenceError::InvalidArgument: return "invalid_argument";
         case InferenceError::ContextLimitExceeded: return "context_limit_exceeded";
         case InferenceError::PinyinLimitExceeded: return "pinyin_limit_exceeded";
+        case InferenceError::InvalidPinyin: return "invalid_pinyin";
         case InferenceError::NoCandidates: return "no_candidates";
         case InferenceError::Cancelled: return "cancelled";
         case InferenceError::ModelError: return "model_error";
@@ -122,8 +125,10 @@ const char* inference_error_name(InferenceError error) {
     return "unknown";
 }
 
-InferenceEngine::InferenceEngine(const std::string& package_root)
+InferenceEngine::InferenceEngine(const std::string& package_root,
+                                 core::EngineConfig engine_config)
     : config_(core::ModelPackageConfig::load(package_root)),
+      engine_config_(std::move(engine_config)),
       tokenizer_(core::Tokenizer::from_config(config_)),
       pre_module_(std::make_unique<Module>(config_.resolve(config_.runtime.pre_model_path))),
       post_module_(std::make_unique<Module>(config_.resolve(config_.runtime.post_model_path))) {
@@ -133,7 +138,7 @@ InferenceEngine::InferenceEngine(const std::string& package_root)
         pre_methods->count(config_.runtime.pre_pass2_method) == 0 ||
         pre_methods->count(config_.runtime.pre_cross_kv_method) == 0) {
         throw std::runtime_error(
-            "InferenceEngine: pre model does not contain configured v2.1 methods");
+            "InferenceEngine: pre model does not contain configured v2.2 methods");
     }
 
     auto post_methods = post_module_->method_names();
@@ -187,9 +192,143 @@ InferenceEngine::InferenceEngine(const std::string& package_root)
                                  runtime_error_message(err) + ")");
     }
 
+    if (config_.segmenter) {
+        if (engine_config_.tokenizer.max_pinyin_chars > config_.segmenter->max_input_chars) {
+            throw std::invalid_argument(
+                "InferenceEngine: tokenizer.max_pinyin_chars exceeds segmenter hard limit");
+        }
+        segmenter_ = std::make_unique<PinyinSegmentScorer>(config_, *config_.segmenter);
+    } else {
+        diagnostics_.push_back(
+            "pinyin segmenter is unavailable; auto segmentation uses checked FMM");
+    }
+
 }
 
 InferenceEngine::~InferenceEngine() = default;
+
+PinyinSegmentationResult InferenceEngine::segment_pinyin(const std::string& input) const {
+    PinyinSegmentationResult result;
+    result.input = input;
+    const core::NormalizedPinyin normalized =
+        core::normalize_pinyin(input, engine_config_.tokenizer.normalization);
+    result.canonical_input = normalized.canonical_input;
+    result.normalization_events = normalized.events;
+
+    if (normalized.canonical_input.empty()) {
+        result.error = InferenceError::InvalidPinyin;
+        return result;
+    }
+    if (normalized.canonical_input.size() >
+        static_cast<size_t>(engine_config_.tokenizer.max_pinyin_chars)) {
+        result.error = InferenceError::PinyinLimitExceeded;
+        return result;
+    }
+
+    const bool can_score = segmenter_ != nullptr &&
+        normalized.canonical_input.size() >=
+            static_cast<size_t>(segmenter_->min_input_chars());
+    result.strategy = can_score ? "scorer_viterbi" : "checked_fmm";
+
+    // Strict validation happens before executing the scorer, avoiding model
+    // work for inputs that have no fully legal route.
+    algo::SegmentationPath strict_path;
+    if (engine_config_.tokenizer.segment_mode == core::SegmentMode::Strict) {
+        strict_path = algo::decode_gap_viterbi(
+            normalized.canonical_input, tokenizer_.pinyin_trie(),
+            normalized.forced_boundaries,
+            std::vector<float>(normalized.forced_boundaries.size(), 0.0f), false);
+        if (!strict_path.reachable) {
+            result.error = InferenceError::InvalidPinyin;
+        }
+    }
+
+    algo::SegmentationPath path;
+    try {
+        if (result.error == InferenceError::InvalidPinyin) {
+            // Build a diagnostic-only path so strict callers can still point
+            // at the original invalid bytes.
+            path = algo::decode_gap_viterbi(
+                normalized.canonical_input, tokenizer_.pinyin_trie(),
+                normalized.forced_boundaries,
+                std::vector<float>(normalized.forced_boundaries.size(), 0.0f), true);
+        } else if (can_score) {
+            path = algo::decode_gap_viterbi(
+                normalized.canonical_input, tokenizer_.pinyin_trie(),
+                normalized.forced_boundaries,
+                segmenter_->score(normalized.canonical_input),
+                engine_config_.tokenizer.segment_mode == core::SegmentMode::Safe);
+        } else if (engine_config_.tokenizer.segment_mode == core::SegmentMode::Strict) {
+            path = std::move(strict_path);
+        } else {
+            path = algo::separate_fmm_checked(
+                normalized.canonical_input, tokenizer_.pinyin_trie(),
+                normalized.forced_boundaries);
+        }
+    } catch (...) {
+        result.error = InferenceError::ModelError;
+        return result;
+    }
+
+    auto append_invalid = [&](const algo::PinyinEdge& edge, const std::string& replacement) {
+        const size_t source_begin = normalized.source_offsets[edge.begin];
+        const size_t source_end = normalized.source_offsets[edge.end - 1] + 1;
+        const std::string original = input.substr(source_begin, source_end - source_begin);
+        if (!result.invalid_ranges.empty() &&
+            result.invalid_ranges.back().end == source_begin) {
+            auto& previous = result.invalid_ranges.back();
+            previous.end = source_end;
+            previous.text += original;
+            previous.replacement += replacement;
+        } else {
+            result.invalid_ranges.push_back(
+                InvalidPinyinRange{source_begin, source_end, original, replacement});
+        }
+    };
+
+    for (const auto& edge : path.edges) {
+        const std::string token = normalized.canonical_input.substr(
+            edge.begin, edge.end - edge.begin);
+        if (!edge.invalid) {
+            result.segments.push_back(token);
+            result.normalized_input += token;
+            continue;
+        }
+
+        std::string replacement;
+        if (engine_config_.tokenizer.segment_mode == core::SegmentMode::Safe &&
+            engine_config_.tokenizer.repair) {
+            replacement = tokenizer_.pinyin_token(tokenizer_.find_pinyin_id_nearest(token));
+            if (!replacement.empty()) {
+                result.segments.push_back(replacement);
+                result.normalized_input += replacement;
+            }
+        }
+        append_invalid(edge, replacement);
+        const size_t source_begin = normalized.source_offsets[edge.begin];
+        const size_t source_end = normalized.source_offsets[edge.end - 1] + 1;
+        if (engine_config_.tokenizer.segment_mode == core::SegmentMode::Safe) {
+            result.normalization_events.push_back(core::PinyinNormalizationEvent{
+                replacement.empty() ? "invalid_deleted" : "invalid_repaired",
+                source_begin, source_end,
+                input.substr(source_begin, source_end - source_begin), replacement});
+        }
+    }
+
+    if (result.error == InferenceError::InvalidPinyin) {
+        result.segments.clear();
+        result.normalized_input.clear();
+        return result;
+    }
+    if (!path.reachable || result.normalized_input.empty()) {
+        result.error = InferenceError::InvalidPinyin;
+        result.segments.clear();
+        result.normalized_input.clear();
+        return result;
+    }
+    result.error = InferenceError::Ok;
+    return result;
+}
 
 InferenceError InferenceEngine::runtime_error_to_status(executorch::runtime::Error error) {
     return error == executorch::runtime::Error::Ok ? InferenceError::Ok

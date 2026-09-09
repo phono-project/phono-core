@@ -1,4 +1,5 @@
 {
+  "schema_version": "1.0",
   "beam_size": 3,
   "slack_interval": 8,
   "min_accept_context": 8,

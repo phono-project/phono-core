@@ -77,22 +77,12 @@ SegmentationPath separate_fmm_checked(const std::string& input, const Trie& trie
     if (forced_boundaries.size() != (input.empty() ? 0 : input.size() - 1)) {
         throw std::invalid_argument("forced_boundaries must have input.size() - 1 entries");
     }
-    SegmentationPath result;
-    result.reachable = !input.empty();
-    for (size_t begin = 0; begin < input.size();) {
-        const size_t end_limit = next_forced_end(begin, input.size(), forced_boundaries);
-        const auto matches = trie.match_lengths(input, begin, end_limit);
-        if (matches.empty()) {
-            result.edges.push_back(PinyinEdge{begin, begin + 1, true});
-            ++result.invalid_char_count;
-            ++begin;
-        } else {
-            const size_t end = begin + matches.back();
-            result.edges.push_back(PinyinEdge{begin, end, false});
-            begin = end;
-        }
-    }
-    return result;
+    // A purely local longest match can enter a dead end even when a complete
+    // legal route exists. Zero-score DAG decoding preserves FMM's longest
+    // deterministic tie-break while globally minimizing invalid characters.
+    return decode_gap_viterbi(
+        input, trie, forced_boundaries,
+        std::vector<float>(forced_boundaries.size(), 0.0f), true);
 }
 
 }  // namespace phono::algo

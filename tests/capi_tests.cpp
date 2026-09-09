@@ -12,6 +12,9 @@
 
 namespace {
 
+constexpr const char* kEngineConfig =
+    R"({"schema_version":"1.0","tokenizer":{"segment_mode":"safe","repair":false,"max_pinyin_chars":128,"normalization":{"lowercase_ascii":true,"normalize_v_to_u":true,"separators":"'"}}})";
+
 void check(bool condition, const char* message) {
     if (!condition) {
         std::fprintf(stderr, "FAIL: %s\n", message);
@@ -25,13 +28,16 @@ void test_error_name_mapping() {
           "PHONO_CONFIG_ERROR name");
     check(std::strcmp(phono_error_name(PHONO_CANCELLED), "cancelled") == 0,
           "PHONO_CANCELLED name");
+    check(std::strcmp(phono_error_name(PHONO_INVALID_PINYIN), "invalid_pinyin") == 0,
+          "PHONO_INVALID_PINYIN name");
     check(phono_error_name(static_cast<phono_status>(9999)) != nullptr,
           "unknown status still yields a name");
 }
 
 void test_engine_rejects_missing_package() {
     phono_engine* engine = nullptr;
-    const phono_status status = phono_engine_create("/nonexistent/phono_model", &engine);
+    const phono_status status =
+        phono_engine_create("/nonexistent/phono_model", kEngineConfig, &engine);
     check(status == PHONO_MODEL_ERROR, "missing package should yield model_error");
     check(engine == nullptr, "engine must stay null on failure");
     check(phono_last_error_message() != nullptr && phono_last_error_message()[0] != '\0',
@@ -40,10 +46,14 @@ void test_engine_rejects_missing_package() {
 
 void test_engine_rejects_null_arguments() {
     phono_engine* engine = nullptr;
-    check(phono_engine_create(nullptr, &engine) == PHONO_INVALID_ARGUMENT,
+    check(phono_engine_create(nullptr, kEngineConfig, &engine) == PHONO_INVALID_ARGUMENT,
           "null package dir should yield invalid_argument");
-    check(phono_engine_create("/some/path", nullptr) == PHONO_INVALID_ARGUMENT,
+    check(phono_engine_create("/some/path", kEngineConfig, nullptr) == PHONO_INVALID_ARGUMENT,
           "null out parameter should yield invalid_argument");
+    check(phono_engine_create("/some/path", nullptr, &engine) == PHONO_CONFIG_ERROR,
+          "null engine config should yield config_error");
+    check(phono_engine_create("/some/path", "{}", &engine) == PHONO_CONFIG_ERROR,
+          "unversioned engine config should yield config_error");
 }
 
 // With a valid engine we can also exercise the core_config validation path.
@@ -74,16 +84,14 @@ void test_core_config_error_surfaces() {
 }
 
 void test_tokenizer_rejects_null_engine() {
-    char** syllables = nullptr;
-    int32_t syllable_count = 0;
-    check(phono_tokenizer_separate_greedy(nullptr, "woxihuanni", &syllables,
-                                          &syllable_count) == PHONO_INVALID_ARGUMENT,
-          "separation with null engine should yield invalid_argument");
-    check(syllables == nullptr && syllable_count == 0,
-          "failed separation should not allocate output");
-    check(phono_tokenizer_separate_greedy(nullptr, "woxihuanni", nullptr,
-                                          &syllable_count) == PHONO_INVALID_ARGUMENT,
-          "separation with null output should yield invalid_argument");
+    char* result = nullptr;
+    check(phono_engine_segment_pinyin(
+              nullptr, R"({"schema_version":"1.0","input":"woxihuanni"})", &result) ==
+              PHONO_INVALID_ARGUMENT,
+          "segmentation with null engine should yield invalid_argument");
+    check(result == nullptr, "failed segmentation should not allocate output");
+    check(phono_tokenizer_find_pinyin_id_exact(nullptr, "wo") == -1,
+          "exact lookup with null engine should fail");
 }
 
 }  // namespace

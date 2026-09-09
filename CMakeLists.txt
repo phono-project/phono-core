@@ -298,6 +298,7 @@ set(PHONO_CORE_SOURCES
     src/context/kv_cache.cpp
     src/context/context.cpp
     src/engine/inference_engine.cpp
+    src/engine/pinyin_segmenter.cpp
     src/custom_ops/update_kv_cache.cpp
 )
 

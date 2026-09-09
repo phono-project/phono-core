@@ -16,6 +16,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -30,6 +31,7 @@ namespace phono::core {
 enum class CoreConfigError {
     Ok = 0,
     InvalidJson,
+    UnsupportedSchemaVersion,
     BeamSizeMismatch,          // beam_size does not match the model batch width
     MaxContextLengthExceeded,  // max_context_length + 1 does not fit pre max_seqlen
     MaxPinyinLengthInvalid,    // max_pinyin_length out of range / exceeds post model limit
@@ -46,6 +48,7 @@ enum class SegmentMode { Strict, Safe };
 enum class EngineConfigError {
     Ok = 0,
     InvalidJson,
+    UnsupportedSchemaVersion,
     InvalidTokenizerConfig,
     InvalidSegmentMode,
     MaxPinyinCharsInvalid,
@@ -156,10 +159,22 @@ struct RuntimeParams {
     std::string post_method = "post_model";
 };
 
+// Optional gap-scoring model bundled with a v2.2 package. Its absence is a
+// supported state: the engine remains usable and auto-segmentation routes to
+// checked FMM with a diagnostic warning.
+struct SegmenterConfig {
+    std::string model_path = "bins/pinyin_segment.pte";
+    std::string method = "forward";
+    std::string char_vocab = "vocabs/pinyin_char_vocab.txt";
+    int32_t min_input_chars = 3;
+    int32_t max_input_chars = 512;
+    std::string layout = "BHWC";
+};
+
 // Top level configuration struct.
 class ModelPackageConfig {
 public:
-    static constexpr const char* kSupportedFormatVersion = "2.1";
+    static constexpr const char* kSupportedFormatVersion = "2.2";
 
     // Loads and validates `<package_root>/config.json`.
     static ModelPackageConfig load(const std::string& package_root);
@@ -173,6 +188,7 @@ public:
     PostModelDims post_model;
     VocabPaths vocabs;
     RuntimeParams runtime;
+    std::optional<SegmenterConfig> segmenter;
 
     std::string model_version = "";
     std::string model_format_version;

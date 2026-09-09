@@ -39,6 +39,7 @@ public:
 
     std::optional<int32_t> find_pinyin_id_exact(std::string_view token) const;
     int32_t find_pinyin_id_nearest(std::string_view token) const;
+    std::string pinyin_token(int32_t id) const;
     const algo::Trie& pinyin_trie() const { return pinyin_tree_; }
 
     // Convert a sequence of chinese_vocab ids back into UTF-8 text.

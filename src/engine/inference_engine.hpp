@@ -9,8 +9,10 @@
 
 #include "context/context.hpp"
 #include "context/kv_cache.hpp"
+#include "core/pinyin_normalizer.hpp"
 #include "core/config.hpp"
 #include "core/tokenizer.hpp"
+#include "engine/pinyin_segmenter.hpp"
 
 namespace phono::engine {
 
@@ -19,6 +21,7 @@ enum class InferenceError {
     InvalidArgument,
     ContextLimitExceeded,
     PinyinLimitExceeded,
+    InvalidPinyin,
     NoCandidates,
     Cancelled,
     ModelError,
@@ -43,6 +46,30 @@ struct GenerateResult {
     std::vector<BeamResult> beams;
     int32_t current_seqlen = 0;
     int32_t history_seqlen = 0;
+
+    bool ok() const { return error == InferenceError::Ok; }
+};
+
+struct InvalidPinyinRange {
+    size_t begin = 0;  // half-open byte range in the original input
+    size_t end = 0;
+    std::string text;
+    std::string replacement;
+};
+
+struct PinyinSegmentationResult {
+    InferenceError error = InferenceError::Ok;
+    std::string input;
+    // Canonical scorer input after configured character normalization and
+    // separator removal, before invalid characters are handled.
+    std::string canonical_input;
+    // Guaranteed tokenizer-valid concatenation on success. In safe mode this
+    // excludes invalid characters, or includes their per-character repairs.
+    std::string normalized_input;
+    std::string strategy;  // "scorer_viterbi" or "checked_fmm"
+    std::vector<std::string> segments;
+    std::vector<InvalidPinyinRange> invalid_ranges;
+    std::vector<core::PinyinNormalizationEvent> normalization_events;
 
     bool ok() const { return error == InferenceError::Ok; }
 };
@@ -72,7 +99,8 @@ struct CrossKvOutput {
 
 class InferenceEngine {
 public:
-    explicit InferenceEngine(const std::string& package_root);
+    explicit InferenceEngine(const std::string& package_root,
+                             core::EngineConfig engine_config = {});
     ~InferenceEngine();
 
     InferenceEngine(const InferenceEngine&) = delete;
@@ -80,6 +108,14 @@ public:
 
     const core::ModelPackageConfig& config() const { return config_; }
     const core::Tokenizer& tokenizer() const { return tokenizer_; }
+    const core::EngineConfig& engine_config() const { return engine_config_; }
+    bool smart_segmenter_available() const { return segmenter_ != nullptr; }
+    const std::vector<std::string>& diagnostics() const { return diagnostics_; }
+
+    // Stable high-level segmentation entry point. It automatically uses the
+    // scorer-backed DAG decoder when the package provides one and the input
+    // meets its minimum length, otherwise checked FMM is used.
+    PinyinSegmentationResult segment_pinyin(const std::string& input) const;
 
     // These methods execute the v2.1 exported methods. They return the runtime
     // error instead of throwing so session methods can report a stable code.
@@ -109,7 +145,10 @@ private:
     static InferenceError runtime_error_to_status(executorch::runtime::Error error);
 
     core::ModelPackageConfig config_;
+    core::EngineConfig engine_config_;
     core::Tokenizer tokenizer_;
+    std::unique_ptr<PinyinSegmentScorer> segmenter_;
+    std::vector<std::string> diagnostics_;
     std::unique_ptr<executorch::extension::Module> pre_module_;
     std::unique_ptr<executorch::extension::Module> post_module_;
     int32_t pre_pass1_batch_size_ = 0;

@@ -158,6 +158,11 @@ int32_t Tokenizer::find_pinyin_id_nearest(std::string_view token) const {
     return best_idx;
 }
 
+std::string Tokenizer::pinyin_token(int32_t id) const {
+    if (id < 0 || static_cast<size_t>(id) >= pinyin_list_.size()) return {};
+    return pinyin_list_[static_cast<size_t>(id)];
+}
+
 std::string Tokenizer::ids_to_text(const std::vector<int32_t>& ids) const {
     std::string out;
     for (int32_t id : ids) {

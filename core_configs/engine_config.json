@@ -1,4 +1,5 @@
 {
+  "schema_version": "1.0",
   "tokenizer": {
     "normalization": {
       "lowercase_ascii": true,
