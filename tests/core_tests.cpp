@@ -363,6 +363,16 @@ void test_model_format_version() {
     const auto valid = phono::core::ModelPackageConfig::load(dir.string());
     check(valid.model_format_version == "2.2", "v2.2 JSON format should load");
 
+    write_file(dir / "config.json", R"({
+        "model_format_version":"2.2",
+        "segmenter":{"layout":"BHWC","min_input_chars":3,
+                     "max_input_chars":128,"quantization":"none"}
+    })");
+    const auto with_segmenter = phono::core::ModelPackageConfig::load(dir.string());
+    check(with_segmenter.segmenter.has_value(), "JSON segmenter config should load");
+    check(with_segmenter.segmenter->quantization == "none",
+          "segmenter quantization metadata should be retained");
+
     for (const std::string& value : {"2", "\"2.1\"", "null"}) {
         write_file(dir / "config.json", "{\"model_format_version\":" + value + "}");
         bool rejected = false;

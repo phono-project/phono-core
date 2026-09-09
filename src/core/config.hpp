@@ -71,13 +71,13 @@ EngineConfigError parse_engine_config(const nlohmann::json& json, EngineConfig& 
 
 class ModelPackageConfig;  // fwd decl, defined below
 
-// Mirrors base.yaml's `common:` section.
+// Mirrors config.json's `common` object.
 struct CommonConfig {
     int32_t model_dim = 768;
     double rope_theta = 1000.0;
 };
 
-// Mirrors base.yaml's `pre_model:` section.
+// Mirrors config.json's `pre_model` object.
 struct PreModelDims {
     int32_t max_seqlen = 128;
     int32_t mhsa_layers = 8;
@@ -88,7 +88,7 @@ struct PreModelDims {
     int32_t self_head_dim() const { return attn_dim / mhsa_heads; }
 };
 
-// Mirrors base.yaml's `post_model:` section.
+// Mirrors config.json's `post_model` object.
 struct PostModelDims {
     int32_t max_seqlen = 32;
     int32_t mhsa_layers = 12;
@@ -102,7 +102,7 @@ struct PostModelDims {
     int32_t cross_head_dim() const { return mhca_attn_dim / mhca_heads; }
 };
 
-// Mirrors the tokenizer's own YAML `vocabs:` section.
+// Mirrors config.json's `vocabs` object.
 struct VocabPaths {
     std::string chinese_vocab = "vocabs/chinese_vocab.txt";
     std::string context_vocab = "vocabs/context_vocab.txt";
@@ -169,6 +169,7 @@ struct SegmenterConfig {
     int32_t min_input_chars = 3;
     int32_t max_input_chars = 512;
     std::string layout = "BHWC";
+    std::string quantization = "none";
 };
 
 // Top level configuration struct.

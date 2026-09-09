@@ -302,6 +302,7 @@ ModelPackageConfig ModelPackageConfig::load(const std::string& package_root) {
         segmenter.min_input_chars = get_or<int32_t>(s, "min_input_chars", segmenter.min_input_chars);
         segmenter.max_input_chars = get_or<int32_t>(s, "max_input_chars", segmenter.max_input_chars);
         segmenter.layout = get_or<std::string>(s, "layout", segmenter.layout);
+        segmenter.quantization = get_or<std::string>(s, "quantization", segmenter.quantization);
         cfg.segmenter = std::move(segmenter);
     }
 
@@ -320,9 +321,12 @@ ModelPackageConfig ModelPackageConfig::load(const std::string& package_root) {
     if (cfg.segmenter &&
         (cfg.segmenter->min_input_chars < 3 ||
          cfg.segmenter->max_input_chars < cfg.segmenter->min_input_chars ||
-         cfg.segmenter->layout != "BHWC")) {
+         cfg.segmenter->layout != "BHWC" ||
+         (cfg.segmenter->quantization != "none" &&
+          cfg.segmenter->quantization != "w8a8"))) {
         throw std::runtime_error(
-            "ModelPackageConfig::load: segmenter requires BHWC and valid input limits");
+            "ModelPackageConfig::load: segmenter requires BHWC, valid input limits, "
+            "and quantization none or w8a8");
     }
 
     return cfg;
