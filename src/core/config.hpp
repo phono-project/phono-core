@@ -125,12 +125,15 @@ struct RuntimeParams {
     std::string post_model_path = "bins/post_model.pte";
     std::string pre_pass1_method = "pre_model_pass1";
     std::string pre_pass2_method = "pre_model_pass2";
+    std::string pre_cross_kv_method = "pre_model_cross_kv";
     std::string post_method = "post_model";
 };
 
 // Top level configuration struct.
 class ModelPackageConfig {
 public:
+    static constexpr const char* kSupportedFormatVersion = "2.1";
+
     // Loads and validates `<package_root>/config.json`.
     static ModelPackageConfig load(const std::string& package_root);
 
@@ -145,7 +148,7 @@ public:
     RuntimeParams runtime;
 
     std::string model_version = "";
-    int32_t model_format_version = 0;
+    std::string model_format_version;
 
     std::string package_root;
 };

@@ -73,6 +73,23 @@ void run(const std::string& package_root) {
           "beam count should match the configured beam width");
     check(first.beams[0].decoded == "你好", "expected 'ni hao' to decode to 你好");
 
+    // Sparse syllables may expose fewer candidates than the fixed pass-2 batch.
+    const auto shei = tokenizer.encode_pinyin({"shei"});
+    const auto sparse = session.generate(*slot, shei);
+    check(sparse.ok(), "a non-empty sparse candidate set should succeed");
+    check(sparse.beams.size() == 1 && sparse.beams[0].decoded == "谁",
+          "shei should return its sole finite candidate");
+
+    const auto shei_me = tokenizer.encode_pinyin({"shei", "me"});
+    const auto expanded = session.generate(*slot, shei_me);
+    check(expanded.ok(), "a sparse first step should continue recursively");
+    check(static_cast<int32_t>(expanded.beams.size()) == session.beam_size(),
+          "later steps should be able to refill inactive beam lanes");
+    for (const auto& beam : expanded.beams) {
+        check(beam.decoded.rfind("谁", 0) == 0,
+              "expanded candidates must preserve the sole valid first token");
+    }
+
     // Reset only invalidates the cursors. Dirty KV data from the previous run
     // must be safely overwritten or masked and produce the same result.
     check(session.reset(*slot) == phono::engine::InferenceError::Ok,

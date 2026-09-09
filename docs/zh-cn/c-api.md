@@ -21,7 +21,7 @@
 | PHONO_INVALID_ARGUMENT | 参数非法（空指针、负长度、id 越界等） |
 | PHONO_CONTEXT_LIMIT_EXCEEDED | 上下文超过前段模型硬上限 |
 | PHONO_PINYIN_LIMIT_EXCEEDED | 拼音窗口超过 max_pinyin_length 或后段硬限制 |
-| PHONO_NO_CANDIDATES | 候选不足，无法填满 beam |
+| PHONO_NO_CANDIDATES | 当前推理步没有任何合法候选 |
 | PHONO_CANCELLED | 回调要求中止，游标已回滚 |
 | PHONO_MODEL_ERROR | 模型加载或运行失败 |
 | PHONO_CONFIG_ERROR | core_config 解析失败或参数超出模型限制 |

@@ -49,18 +49,25 @@ struct GenerateResult {
 
 struct PostModelOutput {
     std::vector<float> hidden;
-    std::vector<uint8_t> logits_mask;
+    std::vector<int32_t> candidate_ids;
+    std::vector<uint8_t> candidate_mask;
     int32_t batch_size = 0;
     int32_t sequence_length = 0;
     int32_t hidden_dim = 0;
-    int32_t projection_size = 0;
+    int32_t candidate_width = 0;
 };
 
 struct DecoderModelOutput {
     std::vector<float> logits;
+    std::vector<int32_t> candidate_ids;
     int32_t batch_size = 0;
     int32_t sequence_length = 0;
     int32_t projection_size = 0;
+};
+
+struct CrossKvOutput {
+    std::vector<float> values;
+    int32_t sequence_length = 0;
 };
 
 class InferenceEngine {
@@ -74,7 +81,7 @@ public:
     const core::ModelPackageConfig& config() const { return config_; }
     const core::Tokenizer& tokenizer() const { return tokenizer_; }
 
-    // These methods execute the v2 exported methods. They return the runtime
+    // These methods execute the v2.1 exported methods. They return the runtime
     // error instead of throwing so session methods can report a stable code.
     InferenceError run_pre_pass1(const std::vector<int32_t>& input_ids,
                                  context::PersistentTensor& self_kv,
@@ -85,8 +92,12 @@ public:
                                  context::PersistentTensor& self_kv,
                                  const std::vector<int32_t>& current_seqlen,
                                  const PostModelOutput& post,
+                                 const CrossKvOutput& cross_kv,
                                  int32_t cross_q_pos_start,
                                  DecoderModelOutput& output) const;
+
+    InferenceError run_pre_cross_kv(const PostModelOutput& post,
+                                    CrossKvOutput& output) const;
 
     InferenceError run_post_model(const std::vector<int32_t>& pinyin_ids,
                                   PostModelOutput& output) const;
@@ -145,6 +156,7 @@ public:
     // first, and the pinyin window is capped at max_pinyin_length. On
     // cancellation the generation cursors are rolled back so the context is
     // left at its committed history state (the KV cache is not rewound).
+    // Successful results contain up to beam_size() finite-score candidates.
     GenerateResult generate(context::Context& context,
                             const std::vector<int32_t>& pinyin_ids,
                             const std::vector<int32_t>& context_ids = {},
