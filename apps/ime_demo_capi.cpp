@@ -261,7 +261,7 @@ int main(int argc, char** argv) {
     if (info_text != nullptr) {
         const nlohmann::json info = nlohmann::json::parse(info_text);
         engine_status = info["segmenter"]["available"].get<bool>()
-            ? "smart scorer + Trie DAG" : "checked FMM fallback";
+            ? "smart" : "FMM";
         if (!info["diagnostics"].empty()) {
             engine_status += " (" + info["diagnostics"].front().get<std::string>() + ")";
         }
