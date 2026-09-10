@@ -5,6 +5,8 @@
 #include <limits>
 #include <stdexcept>
 
+#include <uni_algo/ranges_conv.h>
+
 namespace phono::algo {
 namespace {
 
@@ -39,7 +41,7 @@ void append_candidate(std::vector<SegmentationPath>& best, size_t begin, size_t 
     if (!best[begin].reachable) return;
     SegmentationPath candidate = best[begin];
     candidate.edges.push_back(PinyinEdge{begin, end, invalid});
-    candidate.invalid_char_count += invalid ? static_cast<int32_t>(end - begin) : 0;
+    candidate.invalid_char_count += invalid ? 1 : 0;
     if (end < best.size() - 1) candidate.gap_score += gap_logits[end - 1];
     candidate.reachable = true;
     if (prefer(candidate, best[end])) best[end] = std::move(candidate);
@@ -60,6 +62,12 @@ SegmentationPath decode_gap_viterbi(const std::string& input, const Trie& trie,
     if (input.empty()) return {};
 
     std::vector<SegmentationPath> best(input.size() + 1);
+    std::vector<size_t> invalid_ends(input.size(), 0);
+    auto codepoints = input | una::views::utf8;
+    for (auto it = codepoints.begin(); it != codepoints.end(); ++it) {
+        const size_t begin = static_cast<size_t>(std::distance(input.begin(), it.begin()));
+        invalid_ends[begin] = static_cast<size_t>(std::distance(input.begin(), it.end()));
+    }
     best[0].reachable = true;
     for (size_t begin = 0; begin < input.size(); ++begin) {
         if (!best[begin].reachable) continue;
@@ -67,7 +75,9 @@ SegmentationPath decode_gap_viterbi(const std::string& input, const Trie& trie,
         for (const size_t length : trie.match_lengths(input, begin, end_limit)) {
             append_candidate(best, begin, begin + length, false, gap_logits);
         }
-        if (allow_invalid) append_candidate(best, begin, begin + 1, true, gap_logits);
+        if (allow_invalid && invalid_ends[begin] > begin) {
+            append_candidate(best, begin, invalid_ends[begin], true, gap_logits);
+        }
     }
     return best.back();
 }

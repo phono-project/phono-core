@@ -90,6 +90,15 @@ void test_pinyin_normalization() {
 
     const auto separated = phono::core::normalize_pinyin("j'v", config);
     check(separated.canonical_input == "jv", "v/u mapping must not cross a forced boundary");
+
+    config.separators = "'，";
+    const auto unicode_separator = phono::core::normalize_pinyin("ni，hao你", config);
+    check(unicode_separator.canonical_input == "nihao你",
+          "multi-byte separators must be matched as complete Unicode codepoints");
+    check(unicode_separator.forced_boundaries[1],
+          "a multi-byte separator should force exactly one canonical boundary");
+    check(unicode_separator.source_offsets.back() == 10,
+          "source offsets must retain byte coordinates after a Unicode separator");
 }
 
 void test_gap_viterbi_and_checked_fmm() {
@@ -125,6 +134,14 @@ void test_gap_viterbi_and_checked_fmm() {
     const auto fmm = phono::algo::separate_fmm_checked("xipv", trie, {false, false, false});
     check(fmm.invalid_char_count == 1 && fmm.edges.back().invalid,
           "checked FMM must report rather than silently accept invalid characters");
+
+    const std::string unicode = "p你";
+    const auto unicode_invalid = phono::algo::separate_fmm_checked(
+        unicode, trie, std::vector<bool>(unicode.size() - 1, false));
+    check(unicode_invalid.invalid_char_count == 1 &&
+              unicode_invalid.edges.size() == 2 &&
+              unicode_invalid.edges.back().end - unicode_invalid.edges.back().begin == 3,
+          "one multi-byte Unicode codepoint must produce one invalid edge");
 
     phono::algo::Trie lookahead;
     for (const char* token : {"a", "ab", "bc"}) lookahead.insert(token);
