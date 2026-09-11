@@ -112,8 +112,14 @@ std::vector<int32_t> pinyin_prefix(const phono::core::Tokenizer& tokenizer, int3
         "kan", "dian", "ying", "de", "tian", "qi", "hen", "hao",
         "wo", "men", "chu", "fa", "xue", "xi", "zhong", "wen",
     };
-    return tokenizer.encode_pinyin(
-        std::vector<std::string>(syllables.begin(), syllables.begin() + length));
+    std::vector<int32_t> output;
+    output.reserve(static_cast<size_t>(length));
+    for (auto it = syllables.begin(); it != syllables.begin() + length; ++it) {
+        const auto id = tokenizer.find_pinyin_id_exact(*it);
+        if (!id) throw std::runtime_error("benchmark token missing from pinyin vocabulary");
+        output.push_back(*id);
+    }
+    return output;
 }
 
 int64_t peak_rss_kib() {

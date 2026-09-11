@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "tokenizer": {
+    "normalization": {
+      "lowercase_ascii": true,
+      "normalize_v_to_u": true,
+      "separators": "'"
+    },
+    "segment_mode": "safe",
+    "repair": false,
+    "max_pinyin_chars": 128
+  }
+}

@@ -1,5 +1,6 @@
 // Usage:
-//   ime_demo_capi <model_package_dir> [core_config_json] [num_contexts]
+//   ime_demo_capi <model_package_dir> [engine_config_json]
+//                 [context_manager_json] [num_contexts]
 
 #include <cctype>
 #include <chrono>
@@ -15,6 +16,8 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 
 #ifdef _WIN32
   #include <conio.h>
@@ -36,20 +39,17 @@ extern "C" void handle_sigint(int) { g_interrupted = 1; }
 
 int cancellation_check(void*) { return g_interrupted != 0; }
 
-std::string load_core_config(const std::string& package_root,
-                             const std::string& override_path) {
+std::string load_config(const std::string& filename,
+                        const std::string& override_path) {
     std::ifstream in;
     if (!override_path.empty()) in.open(override_path);
-    if (!in.is_open()) {
-        in.open(std::filesystem::path(package_root) / "core_configs/default.json");
-    }
-    if (!in.is_open()) in.open("core_configs/default.json");
+    if (!in.is_open()) in.open(std::filesystem::path("core_configs") / filename);
 
     std::ostringstream buffer;
     if (in.is_open()) {
         buffer << in.rdbuf();
     } else {
-        buffer << "{}";
+        buffer << "";
     }
     return buffer.str();
 }
@@ -158,9 +158,9 @@ KeyPress read_key() {
 
 #endif
 
-std::string join_syllables(char* const* syllables, int32_t count) {
+std::string join_syllables(const std::vector<std::string>& syllables) {
     std::string separated;
-    for (int32_t i = 0; i < count; ++i) {
+    for (size_t i = 0; i < syllables.size(); ++i) {
         if (i > 0) separated += '\'';
         separated += syllables[i];
     }
@@ -172,6 +172,7 @@ std::string with_cursor(const phono::apps::ImeEditor& editor) {
 }
 
 void render(const phono::apps::ImeEditor& pinyin, const std::string& separated,
+            const std::string& engine_status,
             const phono::apps::ImeEditor& history,
             size_t history_index, size_t history_count,
             const std::vector<std::string>& candidates, const std::string& error,
@@ -179,6 +180,7 @@ void render(const phono::apps::ImeEditor& pinyin, const std::string& separated,
     const bool editing_history = pinyin.text().empty();
     std::cout << "\033[2J\033[H"
               << "pinyin> " << (editing_history ? pinyin.text() : with_cursor(pinyin)) << "\n"
+              << "engine: " << engine_status << "\n"
               << "seg: " << separated << "\n"
               << "history " << history_index + 1 << '/' << history_count << ": "
               << (editing_history ? with_cursor(history) : history.text()) << "\n";
@@ -214,25 +216,29 @@ void print_error(const char* operation, phono_status status) {
 int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "--help") {
         std::cout << "usage: " << argv[0]
-                  << " <model_package_dir> [core_config_json] [num_contexts]\n";
+                  << " <model_package_dir> [engine_config_json]"
+                     " [context_manager_json] [num_contexts]\n";
         return 0;
     }
-    if (argc < 2 || argc > 4) {
+    if (argc < 2 || argc > 5) {
         std::cerr << "usage: " << argv[0]
-                  << " <model_package_dir> [core_config_json] [num_contexts]\n";
+                  << " <model_package_dir> [engine_config_json]"
+                     " [context_manager_json] [num_contexts]\n";
         return 2;
     }
 
     std::signal(SIGINT, handle_sigint);
     const std::string package_root = argv[1];
-    const std::string config_path = argc > 2 ? argv[2] : std::string();
-    const std::string config_json = load_core_config(package_root, config_path);
+    const std::string engine_config_json = load_config(
+        "engine_config.json", argc > 2 ? argv[2] : std::string());
+    const std::string context_config_json = load_config(
+        "context_manager.json", argc > 3 ? argv[3] : std::string());
     int32_t num_contexts = 2;
-    if (argc > 3) {
+    if (argc > 4) {
         try {
             size_t parsed = 0;
-            num_contexts = std::stoi(argv[3], &parsed);
-            if (parsed != std::string(argv[3]).size() || num_contexts <= 0) {
+            num_contexts = std::stoi(argv[4], &parsed);
+            if (parsed != std::string(argv[4]).size() || num_contexts <= 0) {
                 throw std::invalid_argument("invalid num_contexts");
             }
         } catch (...) {
@@ -242,14 +248,28 @@ int main(int argc, char** argv) {
     }
 
     phono_engine* engine = nullptr;
-    phono_status status = phono_engine_create(package_root.c_str(), &engine);
+    phono_status status = phono_engine_create(
+        package_root.c_str(), engine_config_json.c_str(), &engine);
     if (status != PHONO_OK) {
         print_error("failed to load engine", status);
         return static_cast<int>(status);
     }
 
     phono_context_manager* manager = nullptr;
-    status = phono_context_manager_create(engine, config_json.c_str(), num_contexts, &manager);
+    char* info_text = phono_engine_info_json(engine);
+    std::string engine_status = "unknown";
+    if (info_text != nullptr) {
+        const nlohmann::json info = nlohmann::json::parse(info_text);
+        engine_status = info["segmenter"]["available"].get<bool>()
+            ? "smart" : "FMM";
+        if (!info["diagnostics"].empty()) {
+            engine_status += " (" + info["diagnostics"].front().get<std::string>() + ")";
+        }
+        phono_free(info_text);
+    }
+
+    status = phono_context_manager_create(
+        engine, context_config_json.c_str(), num_contexts, &manager);
     if (status != PHONO_OK) {
         print_error("failed to create context manager", status);
         phono_engine_destroy(engine);
@@ -257,7 +277,7 @@ int main(int argc, char** argv) {
     }
 
     phono_session* session = nullptr;
-    status = phono_session_create(engine, config_json.c_str(), &session);
+    status = phono_session_create(engine, context_config_json.c_str(), &session);
     if (status != PHONO_OK) {
         print_error("failed to create session", status);
         phono_context_manager_destroy(manager);
@@ -280,7 +300,7 @@ int main(int argc, char** argv) {
             std::vector<std::string> candidates;
             std::string error;
             std::optional<double> latency_ms;
-            render(pinyin, separated, histories[history_index], history_index, histories.size(),
+            render(pinyin, separated, engine_status, histories[history_index], history_index, histories.size(),
                    candidates, error, latency_ms);
 
             while (g_interrupted == 0) {
@@ -297,7 +317,7 @@ int main(int argc, char** argv) {
                     separated.clear();
                     candidates.clear();
                     error.clear();
-                    render(pinyin, separated, histories[history_index], history_index,
+                    render(pinyin, separated, engine_status, histories[history_index], history_index,
                            histories.size(), candidates, error, latency_ms);
                     continue;
                 }
@@ -314,7 +334,7 @@ int main(int argc, char** argv) {
                             separated.clear();
                             candidates.clear();
                             error.clear();
-                            render(pinyin, separated, history, history_index, histories.size(),
+                            render(pinyin, separated, engine_status, history, history_index, histories.size(),
                                    candidates, error, latency_ms);
                             continue;
                         } else if ((press.character >= 'a' && press.character <= 'z') ||
@@ -353,17 +373,26 @@ int main(int argc, char** argv) {
                 candidates.clear();
                 error.clear();
                 if (!pinyin.text().empty()) {
-                    char** syllables = nullptr;
-                    int32_t syllable_count = 0;
-                    status = phono_tokenizer_separate_greedy(
-                        engine, pinyin.text().c_str(), &syllables, &syllable_count);
-                    if (status == PHONO_OK) separated = join_syllables(syllables, syllable_count);
-
-                    int32_t* pinyin_ids = nullptr;
-                    int32_t pinyin_count = 0;
-                    if (status == PHONO_OK) {
-                        status = phono_tokenizer_encode_pinyin(
-                            engine, syllables, syllable_count, &pinyin_ids, &pinyin_count);
+                    const std::string request = nlohmann::json{
+                        {"schema_version", "1.0"}, {"input", pinyin.text()}}.dump();
+                    char* segmentation_text = nullptr;
+                    status = phono_engine_segment_pinyin(
+                        engine, request.c_str(), &segmentation_text);
+                    std::vector<int32_t> pinyin_ids;
+                    if (segmentation_text != nullptr) {
+                        const nlohmann::json segmentation =
+                            nlohmann::json::parse(segmentation_text);
+                        phono_free(segmentation_text);
+                        const auto syllables =
+                            segmentation["segments"].get<std::vector<std::string>>();
+                        separated = "[" + segmentation["strategy"].get<std::string>() + "] " +
+                                    join_syllables(syllables);
+                        if (!segmentation["invalid_ranges"].empty()) {
+                            error = "invalid_ranges=" +
+                                    segmentation["invalid_ranges"].dump();
+                        }
+                        pinyin_ids =
+                            segmentation["pinyin_ids"].get<std::vector<int32_t>>();
                     }
 
                     int32_t* context_ids = nullptr;
@@ -382,7 +411,9 @@ int main(int argc, char** argv) {
                     phono_generate_result result{};
                     if (status == PHONO_OK) {
                         const auto start = std::chrono::steady_clock::now();
-                        status = phono_session_generate(session, context, pinyin_ids, pinyin_count,
+                        status = phono_session_generate(
+                                                        session, context, pinyin_ids.data(),
+                                                        static_cast<int32_t>(pinyin_ids.size()),
                                                         context_ids, context_count,
                                                         cancellation_check, nullptr, &result);
                         latency_ms = std::chrono::duration<double, std::milli>(
@@ -396,15 +427,13 @@ int main(int argc, char** argv) {
                                                         : result.beams[i].decoded);
                         }
                     } else if (status != PHONO_CANCELLED) {
-                        error = phono_error_name(status);
+                        if (error.empty()) error = phono_error_name(status);
                     }
                     phono_generate_result_free(&result);
                     phono_free(context_ids);
-                    phono_free(pinyin_ids);
-                    phono_free(syllables);
                     if (status == PHONO_CANCELLED && g_interrupted != 0) break;
                 }
-                render(pinyin, separated, history, history_index, histories.size(), candidates,
+                render(pinyin, separated, engine_status, history, history_index, histories.size(), candidates,
                        error, latency_ms);
             }
         }

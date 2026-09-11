@@ -15,19 +15,21 @@ The code is organized into four subdirectories — src/core, src/algo, src/conte
 ## 项目结构
 
 - src/core — 与 ExecuTorch 无关的纯逻辑，命名空间 phono::core
-  - config — 加载模型包的 config.json 并校验维度配置；同时提供运行期 core_config 的解析与校验（解析 core_configs/default.json 中的运行参数，并对照模型硬限制返回错误枚举）
-  - tokenizer — 汉字、上下文、拼音三份词表的编码与解码，拼音未命中时按编辑距离回退到最近音节
+  - config — 加载 v2.2 模型包；解析相互独立的 engine_config 与 context_manager 版本化 JSON
+  - tokenizer — 汉字、上下文、拼音词表的编解码；精确查询与编辑距离查询显式分离
+  - pinyin_normalizer — 大小写、分隔符和 `j/q/x/y + v` 规范化，并保留原输入坐标
   - utf8_util — UTF-8 逐字符切分工具（基于 uni-algo）
 - src/algo — 与 ExecuTorch 无关的解码算法，命名空间 phono::algo
   - zh2hans — 繁体转简体（zh2Hans）最长匹配替换，字典由 res/zh2hans.json 配置期 codegen
+  - pinyin_dag — 从拼音词表 Trie 枚举合法边，执行 Scorer-Viterbi 或 checked FMM
 - src/context — 流式上下文状态，命名空间 phono::context
   - kv_cache — PersistentTensor：零拷贝的持久缓存缓冲区及其子视图
   - context — Context / ContextManager：B 路 self-KV Cache 视图、token id 序列，以及可复用上下文槽位管理
 - src/engine — 推理引擎，命名空间 phono::engine
-  - inference_engine — InferenceEngine 加载 v2 多方法 pre / post .pte 模块；InferenceSession 提供无状态 fill / generate API，以显式上下文槽位为参数
+  - inference_engine — InferenceEngine 组合分词 Scorer、tokenizer 与 P2C 模型，提供稳定的自动分词入口；InferenceSession 提供无状态 fill / generate API
 - src/custom_ops — ExecuTorch 自定义算子，命名空间 phono::ops：update_mhsa_kv
 - interface — C-ABI 调用规范（phono_api.h / phono_api.cpp），编译为 libphono_core.so
-- apps — 可执行程序：streaming_benchmark_demo_capi（C-ABI 基准演示）与 ime_demo_capi（交互式输入法演示）
+- apps — 可执行程序：cli_demo_capi（C-ABI 智能分词演示）与 ime_demo_capi（交互式输入法演示）
 - tests — 单元测试与模型级测试，由 CTest 驱动
 - docs — 文档（docs/zh-cn 与 docs/en-us 分语言维护）
 - third_party — ExecuTorch 源码，由 pixi 的 setup 任务拉取
@@ -35,19 +37,21 @@ The code is organized into four subdirectories — src/core, src/algo, src/conte
 ## Project Layout
 
 - src/core — ExecuTorch-independent pure logic, namespace phono::core
-  - config — loads the model package's config.json and validates dimension configs; also parses and validates the runtime core_config (from core_configs/default.json) against the model's hard limits, returning an error enum instead of crashing
-  - tokenizer — encode/decode for the Chinese, context and pinyin vocabularies; out-of-vocabulary pinyin falls back to the nearest syllable by edit distance
+  - config — loads v2.2 packages and parses the independent, versioned engine and context-manager JSON configs
+  - tokenizer — Chinese/context/pinyin encoding plus explicit exact and nearest pinyin lookup
+  - pinyin_normalizer — case, separator, and `j/q/x/y + v` normalization with original-input coordinates
   - utf8_util — UTF-8 per-character splitting utilities (backed by uni-algo)
 - src/algo — ExecuTorch-independent decoding algorithms, namespace phono::algo
   - zh2hans — Traditional->Simplified (zh2Hans) longest-match replacement; the table is code-generated from res/zh2hans.json at configure time
+  - pinyin_dag — legal-edge enumeration from the vocabulary Trie, scorer-Viterbi, and checked FMM
 - src/context — streaming context state, namespace phono::context
   - kv_cache — PersistentTensor: zero-copy persistent cache buffers and sub-views
   - context — Context / ContextManager: B-wide self-KV-cache views, token-id sequences, and reusable context slots
 - src/engine — inference engine, namespace phono::engine
-  - inference_engine — InferenceEngine loads the v2 multi-method pre/post .pte modules; InferenceSession provides the stateless fill/generate APIs taking an explicit context slot
+  - inference_engine — InferenceEngine composes the segmenter scorer, tokenizer, and P2C models behind a stable auto-segmentation API; InferenceSession provides stateless fill/generate
 - src/custom_ops — ExecuTorch custom operator, namespace phono::ops: update_mhsa_kv
 - interface — the C-ABI call convention (phono_api.h / phono_api.cpp), compiled into libphono_core.so
-- apps — executables: streaming_benchmark_demo_capi (C-ABI benchmark) and ime_demo_capi (interactive IME demo)
+- apps — executables: cli_demo_capi (C-ABI smart-segmentation demo) and ime_demo_capi (interactive IME demo)
 - tests — unit and model-level tests driven by CTest
 - docs — documentation, maintained separately under docs/zh-cn and docs/en-us
 - third_party — ExecuTorch source, fetched by the pixi setup task
@@ -56,45 +60,51 @@ The code is organized into four subdirectories — src/core, src/algo, src/conte
 
 模型包是一个自包含的目录，InferenceEngine 以该目录路径构造：
 
-- config.json — 模型与运行配置，含 common、pre_model、post_model、vocabs、decoding、runtime 六节
-- bins/pre_model.pte — v2.1 前段解码器，包含 pre_model_pass1、pre_model_cross_kv 与 pre_model_pass2
+- config.json — v2.2 模型结构配置；可选的 segmenter 节指向分词模型和字符词表
+- bins/pre_model.pte — 前段解码器，包含 pre_model_pass1、pre_model_cross_kv 与 pre_model_pass2
 - bins/post_model.pte — 后段拼音编码器，输出 hidden states 与定宽候选 ID 表
+- bins/pinyin_segment.pte — BHWC 间隙 Scorer（模型包启用智能分词时必需）
 - vocabs/chinese_vocab.txt — 汉字词表（预测输出空间）
-- vocabs/context_vocab.txt — 上下文词表（含特殊符号，如 bos_token）
+- vocabs/context_vocab.txt — 上下文基础词表；`config.json` 中声明的 `bos_token` 等特殊符号由运行时追加
 - vocabs/pinyin_vocab.txt — 拼音音节词表（模型输入）
-- dict/dict_trie.json — 词典 Trie，供 Viterbi 解码使用（可选）
-- core_configs/default.json — 运行期 core_config：beam、slack_interval、min_accept_context、max_context_length、max_history_length、max_pinyin_length 与槽位淘汰参数
+- vocabs/pinyin_char_vocab.txt — Scorer 字符词表（启用智能分词时必需）
 
-v2.1 base 模型提供两种动态量化版本，可根据模型体积与权重精度需求选择：`w4a8` 使用 4-bit 权重、8-bit 激活，包体更小；`w8a8` 使用 8-bit 权重、8-bit 激活，保留更高的权重精度。两者均使用相同的 v2.1 模型包格式与 phono-core 接口。
+已发布的 v2.2 base 模型包为 `phonop2c_v2_2_base_w4a8_model` 与 `phonop2c_v2_2_base_w8a8_model`。w4a8/w8a8 描述 P2C 主模型；当前分词 Scorer 使用可动态长度执行的非量化 PTE。模型格式锁定为字符串 `"2.2"`，不兼容旧包。运行期配置不放入模型包，使用仓库的 `core_configs/engine_config.json` 与 `core_configs/context_manager.json`。
 
+使用 Hugging Face CLI 下载其中一个模型包：
+
+```bash
+hf download afirelily/phonop2c_v2_2_base_w4a8_model --local-dir ./phonop2c_v2_2_base_w4a8_model
+# 或
+hf download afirelily/phonop2c_v2_2_base_w8a8_model --local-dir ./phonop2c_v2_2_base_w8a8_model
 ```
-hf download afirelily/phonop2c_v2_1_base_w4a8_model --local-dir ./phonop2c_v2_1_base_w4a8_model
-hf download afirelily/phonop2c_v2_1_base_w8a8_model --local-dir ./phonop2c_v2_1_base_w8a8_model
-```
 
-v2.1 模型要求 pre 程序包含 pre_model_pass1、pre_model_cross_kv 与 pre_model_pass2，并要求 post 方法名为 post_model；模型包的 config.json 中 model_format_version 必须是字符串 `"2.1"`。该格式不兼容 v2 及更早的模型包。
+Trie 在加载时直接由 `pinyin_vocab.txt` 构造，不在模型包中保存另一份词典结构。
 
 ## Model Package
 
 A model package is a self-contained directory; InferenceEngine is constructed with its path:
 
-- config.json — model and runtime config, in six sections: common, pre_model, post_model, vocabs, decoding, runtime
-- bins/pre_model.pte — the v2.1 decoder with pre_model_pass1, pre_model_cross_kv and pre_model_pass2
+- config.json — the v2.2 model structure; its optional segmenter section points to the scorer and character vocabulary
+- bins/pre_model.pte — the decoder with pre_model_pass1, pre_model_cross_kv and pre_model_pass2
 - bins/post_model.pte — the pinyin encoder, returning hidden states and a bounded candidate-ID table
+- bins/pinyin_segment.pte — the BHWC gap scorer (required when smart segmentation is enabled)
 - vocabs/chinese_vocab.txt — the Chinese-character vocabulary (prediction output space)
-- vocabs/context_vocab.txt — the context vocabulary (including special tokens such as bos_token)
+- vocabs/context_vocab.txt — the base context vocabulary; special tokens such as `bos_token` are declared in `config.json` and appended at runtime
 - vocabs/pinyin_vocab.txt — the pinyin-syllable vocabulary (model input)
-- dict/dict_trie.json — the dictionary trie, used by Viterbi decoding (optional)
-- core_configs/default.json — the runtime core_config: beam, slack_interval, min_accept_context, max_context_length, max_history_length, max_pinyin_length and slot-eviction parameters
+- vocabs/pinyin_char_vocab.txt — scorer character vocabulary (required when smart segmentation is enabled)
 
-The v2.1 base model is available in two dynamically quantized variants. Choose `w4a8` (4-bit weights and 8-bit activations) for a smaller package, or `w8a8` (8-bit weights and 8-bit activations) for higher weight precision. Both variants use the same v2.1 package format and phono-core interface.
+The published v2.2 base packages are `phonop2c_v2_2_base_w4a8_model` and `phonop2c_v2_2_base_w8a8_model`. w4a8/w8a8 describes the main P2C model; the current segmentation scorer is an unquantized PTE that supports dynamic input lengths. The package format is locked to string `"2.2"` and intentionally does not accept old packages. Runtime policy lives outside the package in `core_configs/engine_config.json` and `core_configs/context_manager.json`.
 
+Download either package with the Hugging Face CLI:
+
+```bash
+hf download afirelily/phonop2c_v2_2_base_w4a8_model --local-dir ./phonop2c_v2_2_base_w4a8_model
+# or
+hf download afirelily/phonop2c_v2_2_base_w8a8_model --local-dir ./phonop2c_v2_2_base_w8a8_model
 ```
-hf download afirelily/phonop2c_v2_1_base_w4a8_model --local-dir ./phonop2c_v2_1_base_w4a8_model
-hf download afirelily/phonop2c_v2_1_base_w8a8_model --local-dir ./phonop2c_v2_1_base_w8a8_model
-```
 
-The v2.1 model requires the pre program to expose pre_model_pass1, pre_model_cross_kv and pre_model_pass2, and the post method to be named post_model. `model_format_version` must be the string `"2.1"`; this format is intentionally incompatible with v2 and earlier packages.
+The Trie is built directly from `pinyin_vocab.txt` at load time, so no second serialized dictionary structure is stored in the package.
 
 ## 构建与运行
 
@@ -108,14 +118,14 @@ The v2.1 model requires the pre program to expose pre_model_pass1, pre_model_cro
 
 ### 选择性编译（算子裁剪）
 
-PhonoP2C 的 export.py 在导出 pre_model.pte / post_model.pte 之后会生成 ExecuTorch 选择编译清单（selected_operators.yaml 格式）：每个模型一份，以及一份合并清单，记录模型实际使用的算子与精度（dtype/dim-order）。把这些清单文件复制到 ops_config/ 目录后重新 `pixi run config && pixi run build`，编译会自动裁剪 ExecuTorch 内核库：
+PhonoP2C 的 Hydra 导出任务（`python main.py task=export`，实现在 `export/task.py`）会在导出 pre_model.pte / post_model.pte 后生成 ExecuTorch 选择编译清单（selected_operators.yaml 格式）：每个模型一份，以及一份合并清单，记录模型实际使用的算子与精度（dtype/dim-order）。把这些清单文件复制到 ops_config/ 目录后重新 `pixi run config && pixi run build`，编译会自动裁剪 ExecuTorch 内核库：
 
 - 算子裁剪：通过 EXECUTORCH_SELECT_OPS_LIST 只注册清单中出现的算子，避免链接完整 portable_ops_lib；
 - 精度裁剪：由合并清单生成 selected_op_variants.h 并配合 EXECUTORCH_SELECTIVE_BUILD_DTYPE 只保留清单中出现的 dtype 变体（ExecuTorch 官方仅支持单个 .pte 模型走 dtype 裁剪，这里改为基于多模型合并清单）。
 
 可调 CMake 选项：PHONO_OPS_CONFIG_DIR（清单目录，默认 ops_config/）、PHONO_OPS_MANIFESTS（手动指定要合并的清单文件，默认取 <tag>_ops.yaml 合并清单）、PHONO_DTYPE_SELECTIVE_BUILD（默认 ON，关闭则只做算子裁剪）。没有清单时自动回退为完整内核库构建。
 
-不同平台的 vcpkg 配置、CMake 生成器与编译工具链有所差异，请参阅 docs/zh-cn/build.md（简体中文）与 docs/en-us/build.md（English）中的分平台说明。其他文档（架构设计、core_config 参考、C-ABI 规范）同样按语言分别维护在 docs/zh-cn 与 docs/en-us 下。
+不同平台的 vcpkg 配置、CMake 生成器与编译工具链有所差异，请参阅 docs/zh-cn/build.md（简体中文）与 docs/en-us/build.md（English）中的分平台说明。智能分词的 MAP 原理、非法输入策略和版本化 JSON Schema 见 docs/zh-cn/pinyin-segmentation.md；运行配置与 C ABI 分别见 core-config.md 和 c-api.md。
 
 ## Build & Run
 
@@ -129,67 +139,64 @@ At configure time, CMake cache variables can be overridden: PHONO_USE_INSTALLED_
 
 ### Selective build (operator pruning)
 
-PhonoP2C's export.py emits ExecuTorch selective-build manifests (selected_operators.yaml format) after exporting pre_model.pte / post_model.pte: one per model plus a merged one, recording exactly which operators and dtypes (dtype/dim-order kernel variants) the models use. Copy the manifests into ops_config/ and re-run `pixi run config && pixi run build` to prune the ExecuTorch kernel library:
+PhonoP2C's Hydra export task (`python main.py task=export`, implemented in `export/task.py`) emits ExecuTorch selective-build manifests after exporting pre_model.pte / post_model.pte: one per model plus a merged one in selected_operators.yaml format, recording exactly which operators and dtypes (dtype/dim-order kernel variants) the models use. Copy the manifests into ops_config/ and re-run `pixi run config && pixi run build` to prune the ExecuTorch kernel library:
 
 - Operator pruning: EXECUTORCH_SELECT_OPS_LIST registers only the operators present in the manifests, so the full portable_ops_lib is never linked.
 - Dtype (precision) pruning: a selected_op_variants.h header is generated from the merged manifest and combined with EXECUTORCH_SELECTIVE_BUILD_DTYPE to keep only the dtype variants actually used. (Upstream ExecuTorch only supports dtype-selective-build from a single .pte model; here it is driven by the multi-model merged manifest instead.)
 
 Tunable CMake options: PHONO_OPS_CONFIG_DIR (manifest directory, default ops_config/), PHONO_OPS_MANIFESTS (explicit manifest list to merge; default picks the <tag>_ops.yaml merged manifest), and PHONO_DTYPE_SELECTIVE_BUILD (default ON; set OFF to do operator pruning only). When no manifest is present the build falls back to the full kernel library.
 
-Because the vcpkg configuration, the CMake generator and the compiler toolchain differ per platform, see docs/en-us/build.md (English) or docs/zh-cn/build.md (简体中文) for platform-specific instructions. The other documentation (architecture, core_config reference, C-ABI specification) is likewise maintained per language under docs/en-us and docs/zh-cn.
+Because the vcpkg configuration, the CMake generator and the compiler toolchain differ per platform, see docs/en-us/build.md (English) or docs/zh-cn/build.md (简体中文) for platform-specific instructions. The MAP derivation, invalid-input behavior, and versioned JSON schema are in docs/en-us/pinyin-segmentation.md; runtime configuration and the C ABI are documented in core-config.md and c-api.md.
 
 ## 使用
 
 下载模型之后，运行 C-ABI 演示程序：
 
 ```
-results/streaming_benchmark_demo_capi phonop2c_v2_1_base_w4a8_model
+results/cli_demo_capi phonop2c_v2_2_base_w4a8_model
 ```
 
 如需排除交互输入并进行可重复的性能测量，可向 CSV 基准程序传入模型包、采样次数和预热次数：
 
 ```
-results/performance_benchmark phonop2c_v2_1_base_w4a8_model 20 5
+results/performance_benchmark phonop2c_v2_2_base_w4a8_model 20 5
 ```
 
 该程序报告模型加载耗时与 RSS、pre/post 各方法耗时、不同历史及拼音窗口长度下的生成耗时、单 token 增量 fill 耗时，以及 KV 清零、全量/增量 beam 重排和 session reset 的微基准。每个计时样本之前的输入构造、上下文填充和缓存初始化不计入样本耗时。
 
-程序从 stdin 读取一行连续拼音窗口，例如 nihao，并通过 phono_tokenizer_separate_greedy 自动切分；可使用单引号显式提示边界，例如 ni'hao。每个窗口通过 InferenceSession::generate 执行 B 路 beam search；提交候选后下一次 fill 只对新增的严格因果历史做增量预填充。core_config 由程序从模型包的 core_configs/default.json 加载，也支持以第二个命令行参数传入自定义的 JSON 文件；当参数不符合模型限制（例如 beam 或上下文最大长度超出模型极限）时，程序打印错误枚举代码并退出。
+CLI 从 stdin 读取连续拼音窗口，例如 `nihaoma`。它通过版本化 JSON 调用稳定的自动分词接口，展示 `scorer_viterbi`/`checked_fmm` 路由、非法位置和规范化事件，再把响应中的 `pinyin_ids` 直接送入生成接口。第二、第三个参数可分别指定 `engine_config.json` 和 `context_manager.json`；缺省时读取仓库 `core_configs/` 下的同名文件。
 
 模拟实时输入法编辑，可以运行：
 ```
-results/ime_demo_capi phonop2c_v2_1_base_w4a8_model
+results/ime_demo_capi phonop2c_v2_2_base_w4a8_model
 ```
-程序支持左右移动光标以及 Backspace/Delete 删除；拼音为空时，这些编辑键作用于已确认历史，模型仅接收历史光标之前的内容。此时还可用上下键切换历史，从而测试 ContextManager 的缓存复用；默认创建 2 个上下文，也可通过第三个参数指定数量。切分栏实时显示自动切分结果，下一栏显示当前历史，其余栏显示候选。输入候选编号即可在光标处提交到历史。按 Ctrl-C 退出。
+程序支持左右移动光标以及 Backspace/Delete 删除；拼音为空时，这些编辑键作用于已确认历史。切分栏实时显示智能/FMM 路由与非法范围，下一栏显示当前历史，其余栏显示候选。前两个可选参数仍是两份 JSON，第四个参数可指定上下文数量（默认 2）。按 Ctrl-C 退出。
 
 ## Usage
 
 Run the C-ABI demo after downloading the model:
 
 ```
-results/streaming_benchmark_demo_capi phonop2c_v2_1_base_w4a8_model
+results/cli_demo_capi phonop2c_v2_2_base_w4a8_model
 ```
 
-For repeatable performance measurements without interactive I/O, run the CSV
-benchmark with a model package, iteration count and warmup count:
+For repeatable performance measurements without interactive I/O, run the CSV benchmark with a model package, iteration count and warmup count:
 
 ```
-results/performance_benchmark phonop2c_v2_1_base_w4a8_model 20 5
+results/performance_benchmark phonop2c_v2_2_base_w4a8_model 20 5
 ```
 
-It reports model-load RSS and latency, individual pre/post method latency,
-generation across several history/window lengths, and one-token incremental
-fill latency. Setup and cache initialization are outside each timed sample.
+It reports model-load RSS and latency, individual pre/post method latency, generation across several history/window lengths, and one-token incremental fill latency. Setup and cache initialization are outside each timed sample.
 
-The program reads one unseparated pinyin window per line from stdin, e.g. nihao, and segments it with phono_tokenizer_separate_greedy; use a single quote to explicitly hint a boundary, e.g. ni'hao. Each window uses InferenceSession::generate for B-way beam search; after a candidate is committed, the next fill incrementally pre-fills only the new strictly-causal history. The core_config is loaded from the package's core_configs/default.json, and a custom JSON file can be passed as the second command-line argument; when a parameter does not fit the model (for example the beam or the context length exceeds a model limit), the program prints the error enum code and exits.
+The CLI reads one continuous pinyin window per line, such as `nihaoma`. It calls the stable automatic segmentation endpoint with versioned JSON, displays the `scorer_viterbi`/`checked_fmm` route, invalid ranges, and normalization events, then passes the returned `pinyin_ids` directly to generation. Optional arguments two and three select `engine_config.json` and `context_manager.json`; the defaults come from the repository's `core_configs/` directory.
 
 For real-time editing with left/right movement and backspace/delete, run:
 
 ```
-results/ime_demo_capi phonop2c_v2_1_base_w4a8_model
+results/ime_demo_capi phonop2c_v2_2_base_w4a8_model
 ```
 
-When pinyin is empty, those editing keys operate on committed history, and only the history prefix before the cursor is sent to the model. Up/Down then switches histories to exercise ContextManager cache reuse. Two contexts are created by default; pass a third argument to choose another count. The segmentation bar shows automatic segmentation, the next bar shows the active history, and the remaining bars show candidates after every edit. Type a candidate number to commit it at the cursor. Press Ctrl-C to exit.
+When pinyin is empty, editing keys operate on committed history. The segmentation bar displays the smart/FMM route and invalid ranges, followed by history and candidate rows. The first two optional arguments are the engine and context JSON paths; a fourth argument selects the context count (default 2). Press Ctrl-C to exit.
 
 ## 流式推理设计
 

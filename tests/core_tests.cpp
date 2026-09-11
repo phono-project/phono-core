@@ -5,10 +5,12 @@
 #include <vector>
 
 #include "algo/trie.hpp"
+#include "algo/pinyin_segment.hpp"
 #include "algo/zh2hans.hpp"
 #include "context/context.hpp"
 #include "core/config.hpp"
 #include "core/text_normalizer.hpp"
+#include "core/pinyin_normalizer.hpp"
 #include "core/tokenizer.hpp"
 
 namespace {
@@ -47,7 +49,7 @@ phono::core::CoreConfig test_core_config() {
     return cfg;
 }
 
-void test_trie_lookup_and_longest_match() {
+void test_trie_lookup_and_all_matches() {
     phono::algo::Trie trie;
     trie.insert("w");
     trie.insert("wo");
@@ -58,10 +60,96 @@ void test_trie_lookup_and_longest_match() {
     check(trie.contains("wo"), "trie should contain inserted words");
     check(!trie.contains("x"), "trie should reject non-terminal prefixes");
     check(!trie.contains(""), "trie should reject the empty word");
-    check(trie.longest_match("woxian", 0) == 2, "trie should choose the longest match");
-    check(trie.longest_match("woxian", 2) == 4, "trie should match from an offset");
-    check(trie.longest_match("unknown") == 0, "trie should report a missing match");
-    check(trie.longest_match("wo", 2) == 0, "trie should reject an end offset");
+    check(trie.match_lengths("woxian", 0) == std::vector<size_t>({1, 2}),
+          "trie should return every terminal match");
+    check(trie.match_lengths("woxian", 2) == std::vector<size_t>({2, 4}),
+          "trie should return every match from an offset");
+    check(trie.match_lengths("xian", 0, 2) == std::vector<size_t>({2}),
+          "trie should respect the caller's end boundary");
+    check(trie.match_lengths("unknown").empty(), "trie should report a missing match");
+    check(trie.match_lengths("wo", 2).empty(), "trie should reject an end offset");
+}
+
+void test_pinyin_normalization() {
+    phono::core::PinyinNormalizationConfig config;
+    const auto normalized = phono::core::normalize_pinyin("Jv'an-LV", config);
+    check(normalized.canonical_input == "juan-lv", "normalizer should lowercase and map jv");
+    check(normalized.forced_boundaries.size() == normalized.canonical_input.size() - 1,
+          "normalizer should align forced boundaries with canonical gaps");
+    check(normalized.forced_boundaries[1], "quote should force the preceding canonical gap");
+    check(normalized.canonical_input.substr(5) == "lv", "lv must retain v");
+    check(normalized.source_offsets[2] == 3, "source offsets should skip separators");
+
+    bool saw_v_to_u = false;
+    bool saw_forced = false;
+    for (const auto& event : normalized.events) {
+        saw_v_to_u = saw_v_to_u || event.type == "v_to_u";
+        saw_forced = saw_forced || event.type == "forced_boundary";
+    }
+    check(saw_v_to_u && saw_forced, "normalizer should report every transformation");
+
+    const auto separated = phono::core::normalize_pinyin("j'v", config);
+    check(separated.canonical_input == "jv", "v/u mapping must not cross a forced boundary");
+
+    config.separators = "'，";
+    const auto unicode_separator = phono::core::normalize_pinyin("ni，hao你", config);
+    check(unicode_separator.canonical_input == "nihao你",
+          "multi-byte separators must be matched as complete Unicode codepoints");
+    check(unicode_separator.forced_boundaries[1],
+          "a multi-byte separator should force exactly one canonical boundary");
+    check(unicode_separator.source_offsets.back() == 10,
+          "source offsets must retain byte coordinates after a Unicode separator");
+}
+
+void test_gap_viterbi_and_checked_fmm() {
+    phono::algo::Trie trie;
+    for (const char* token : {"p", "b", "xi", "an", "xian"}) trie.insert(token);
+
+    const auto pb = phono::algo::decode_gap_viterbi(
+        "pb", trie, {false}, {-100.0f}, true);
+    check(pb.reachable && pb.invalid_char_count == 0 && pb.edges.size() == 2,
+          "a fully legal jianpin path must beat invalid fallback edges");
+
+    const auto pv = phono::algo::decode_gap_viterbi(
+        "pv", trie, {false}, {0.0f}, true);
+    check(pv.reachable && pv.invalid_char_count == 1 && pv.edges.size() == 2 &&
+              pv.edges[1].invalid,
+          "unavoidable invalid characters should remain explicitly marked");
+
+    const auto strict_pv = phono::algo::decode_gap_viterbi(
+        "pv", trie, {false}, {0.0f}, false);
+    check(!strict_pv.reachable, "strict DAG decoding should reject an incomplete path");
+
+    const auto joined = phono::algo::decode_gap_viterbi(
+        "xian", trie, {false, false, false}, {0.0f, -2.0f, 0.0f}, false);
+    check(joined.edges.size() == 1, "negative boundary logits should prefer xian");
+    const auto split = phono::algo::decode_gap_viterbi(
+        "xian", trie, {false, false, false}, {0.0f, 2.0f, 0.0f}, false);
+    check(split.edges.size() == 2 && split.edges[0].end == 2,
+          "positive boundary logits should prefer xi-an");
+    const auto forced = phono::algo::decode_gap_viterbi(
+        "xian", trie, {false, true, false}, {0.0f, -100.0f, 0.0f}, false);
+    check(forced.edges.size() == 2, "forced boundaries must prohibit crossing edges");
+
+    const auto fmm = phono::algo::separate_fmm_checked("xipv", trie, {false, false, false});
+    check(fmm.invalid_char_count == 1 && fmm.edges.back().invalid,
+          "checked FMM must report rather than silently accept invalid characters");
+
+    const std::string unicode = "p你";
+    const auto unicode_invalid = phono::algo::separate_fmm_checked(
+        unicode, trie, std::vector<bool>(unicode.size() - 1, false));
+    check(unicode_invalid.invalid_char_count == 1 &&
+              unicode_invalid.edges.size() == 2 &&
+              unicode_invalid.edges.back().end - unicode_invalid.edges.back().begin == 3,
+          "one multi-byte Unicode codepoint must produce one invalid edge");
+
+    phono::algo::Trie lookahead;
+    for (const char* token : {"a", "ab", "bc"}) lookahead.insert(token);
+    const auto complete = phono::algo::separate_fmm_checked(
+        "abc", lookahead, {false, false});
+    check(complete.invalid_char_count == 0 && complete.edges.size() == 2 &&
+              complete.edges.front().end == 1,
+          "checked FMM must not take a longest prefix that creates an avoidable dead end");
 }
 
 void test_tokenizer_normalizes_and_skips_unknown() {
@@ -83,19 +171,18 @@ void test_tokenizer_normalizes_and_skips_unknown() {
     check(tokenizer.encode_context("X").empty(), "unknown context ids should be skipped");
     check(tokenizer.chinese_id_to_context_id(0) == 0, "Chinese/context ids should map");
     check(tokenizer.chinese_id_to_context_id(99) == -1, "unknown Chinese id should fail");
-    check(tokenizer.separate_greedy("woxihuanni") ==
-              std::vector<std::string>({"wo", "xi", "huan", "ni"}),
-          "pinyin should use greedy longest matches");
-    check(tokenizer.separate_greedy("xian") == std::vector<std::string>({"xian"}),
-          "an unbroken pinyin should keep the longest syllable");
-    check(tokenizer.separate_greedy("xi'an") == std::vector<std::string>({"xi", "an"}),
-          "single quotes should force breakpoints");
-    check(tokenizer.separate_greedy("wxhn") ==
-              std::vector<std::string>({"w", "x", "h", "n"}),
-          "jianpin entries should be separated like full syllables");
-    check(tokenizer.separate_greedy("'wo''xi'") ==
-              std::vector<std::string>({"wo", "xi"}),
-          "empty quoted segments should be ignored");
+    check(tokenizer.find_pinyin_id_exact("wo").has_value(),
+          "exact pinyin lookup should find vocabulary entries");
+    check(!tokenizer.find_pinyin_id_exact("invalid").has_value(),
+          "exact pinyin lookup must not silently repair unknown entries");
+    check(tokenizer.find_pinyin_id_nearest("wo") == *tokenizer.find_pinyin_id_exact("wo"),
+          "nearest lookup should preserve exact entries");
+    check(tokenizer.pinyin_token(*tokenizer.find_pinyin_id_exact("wo")) == "wo",
+          "pinyin ids should map back to vocabulary tokens");
+    check(tokenizer.pinyin_token(tokenizer.find_pinyin_id_nearest("v")) == "a",
+          "nearest-token ties should use lexical order for deterministic repair");
+    check(tokenizer.pinyin_trie().contains("xian"),
+          "tokenizer should expose its immutable pinyin trie to segmentation algorithms");
 
     std::filesystem::remove_all(dir);
 }
@@ -250,6 +337,7 @@ void test_core_config_default_and_parse() {
 
     // The new core_config key names supersede the old N / T.
     const nlohmann::json options = {
+        {"schema_version", "1.0"},
         {"beam_size", 2},
         {"slack_interval", 1},
         {"min_accept_context", 2},
@@ -268,6 +356,7 @@ void test_core_config_default_and_parse() {
 
     // Legacy N / T keys must no longer configure anything.
     const nlohmann::json legacy = {
+        {"schema_version", "1.0"},
         {"beam_size", 2}, {"N", 1}, {"T", 2},
         {"max_context_length", 15}, {"max_history_length", 10}, {"max_pinyin_length", 3},
     };
@@ -287,11 +376,21 @@ void test_model_format_version() {
     const auto dir = std::filesystem::temp_directory_path() / "phono_core_format_test";
     std::filesystem::create_directories(dir);
 
-    write_file(dir / "config.json", R"({"model_format_version":"2.1"})");
+    write_file(dir / "config.json", R"({"model_format_version":"2.2"})");
     const auto valid = phono::core::ModelPackageConfig::load(dir.string());
-    check(valid.model_format_version == "2.1", "v2.1 string format should load");
+    check(valid.model_format_version == "2.2", "v2.2 JSON format should load");
 
-    for (const std::string& value : {"2", "\"2.0\"", "null"}) {
+    write_file(dir / "config.json", R"({
+        "model_format_version":"2.2",
+        "segmenter":{"layout":"BHWC","min_input_chars":3,
+                     "max_input_chars":128,"quantization":"none"}
+    })");
+    const auto with_segmenter = phono::core::ModelPackageConfig::load(dir.string());
+    check(with_segmenter.segmenter.has_value(), "JSON segmenter config should load");
+    check(with_segmenter.segmenter->quantization == "none",
+          "segmenter quantization metadata should be retained");
+
+    for (const std::string& value : {"2", "\"2.1\"", "null"}) {
         write_file(dir / "config.json", "{\"model_format_version\":" + value + "}");
         bool rejected = false;
         try {
@@ -299,13 +398,14 @@ void test_model_format_version() {
         } catch (const std::exception&) {
             rejected = true;
         }
-        check(rejected, "non-v2.1 model format should be rejected");
+        check(rejected, "non-v2.2 model format should be rejected");
     }
     std::filesystem::remove_all(dir);
 }
 
 nlohmann::json to_json(const phono::core::CoreConfig& config) {
     return {
+        {"schema_version", "1.0"},
         {"beam_size", config.beam_size},
         {"slack_interval", config.slack_interval},
         {"min_accept_context", config.min_accept_context},
@@ -372,17 +472,57 @@ void test_core_config_validation() {
               phono::core::CoreConfigError::InvalidJson,
           "malformed JSON string should be rejected");
     check(phono::core::parse_core_config(
-              nlohmann::json::object({}), cfg, out) == phono::core::CoreConfigError::Ok,
-          "empty core config should fall back to model-derived defaults");
-    check(out.beam_size == phono::core::default_core_config(cfg).beam_size &&
-              out.max_history_length == phono::core::default_core_config(cfg).max_history_length,
-          "empty core config should equal default_core_config");
+              nlohmann::json::object({}), cfg, out) ==
+              phono::core::CoreConfigError::UnsupportedSchemaVersion,
+          "unversioned core config should be rejected");
+}
+
+void test_engine_config_parse() {
+    phono::core::EngineConfig config;
+    const nlohmann::json valid = {
+        {"schema_version", "1.0"},
+        {"tokenizer", {
+            {"normalization", {
+                {"lowercase_ascii", false},
+                {"normalize_v_to_u", true},
+                {"separators", "' "},
+            }},
+            {"segment_mode", "strict"},
+            {"repair", true},
+            {"max_pinyin_chars", 64},
+        }},
+    };
+    check(phono::core::parse_engine_config(valid, config) ==
+              phono::core::EngineConfigError::Ok,
+          "valid engine config should parse");
+    check(config.tokenizer.segment_mode == phono::core::SegmentMode::Strict &&
+              config.tokenizer.repair && config.tokenizer.max_pinyin_chars == 64 &&
+              !config.tokenizer.normalization.lowercase_ascii,
+          "engine tokenizer options should be preserved");
+
+    auto bad_mode = valid;
+    bad_mode["tokenizer"]["segment_mode"] = "guess";
+    check(phono::core::parse_engine_config(bad_mode, config) ==
+              phono::core::EngineConfigError::InvalidSegmentMode,
+          "unknown segmentation mode should be rejected");
+    auto bad_limit = valid;
+    bad_limit["tokenizer"]["max_pinyin_chars"] = 0;
+    check(phono::core::parse_engine_config(bad_limit, config) ==
+              phono::core::EngineConfigError::MaxPinyinCharsInvalid,
+          "non-positive character limits should be rejected");
+    auto bad_separator = valid;
+    bad_separator["tokenizer"]["normalization"]["separators"] = "a";
+    check(phono::core::parse_engine_config(bad_separator, config) ==
+              phono::core::EngineConfigError::InvalidTokenizerConfig,
+          "letters cannot be configured as separators");
 }
 
 }  // namespace
 
 int main() {
-    test_trie_lookup_and_longest_match();
+    test_trie_lookup_and_all_matches();
+    test_pinyin_normalization();
+    test_gap_viterbi_and_checked_fmm();
     test_tokenizer_normalizes_and_skips_unknown();
     test_zh2hans_simplification();
     test_cache_slice_operations();
@@ -390,5 +530,6 @@ int main() {
     test_core_config_default_and_parse();
     test_model_format_version();
     test_core_config_validation();
+    test_engine_config_parse();
     return 0;
 }

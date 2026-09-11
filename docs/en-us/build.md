@@ -27,15 +27,12 @@ When CMAKE_TOOLCHAIN_FILE is not set explicitly, CMake reads the VCPKG_ROOT envi
 Build artifacts are output to results/ by default:
 
 - libphono_core.so — the C-ABI shared library
-- streaming_benchmark_demo_capi — the C-ABI demo
+- cli_demo_capi — the C-ABI smart-segmentation demo
 - ime_demo_capi — the interactive C-ABI IME demo
 
 ## Selective build (operator/dtype pruning)
 
-PhonoP2C's export.py writes ExecuTorch selective-build manifests after export
-(one per model + a merged one) into PhonoP2C/export_output/manifests/. To prune
-the ExecuTorch kernel library to exactly what the deployed models use, copy the
-manifests into phono-core's ops_config/ directory and reconfigure:
+PhonoP2C's Hydra export task (`python main.py task=export`, implemented in `export/task.py`) writes ExecuTorch selective-build manifests after export (one per model + a merged one) into PhonoP2C/export_output/manifests/. To prune the ExecuTorch kernel library to exactly what the deployed models use, copy the manifests into phono-core's ops_config/ directory and reconfigure:
 
 ```
 cp <PhonoP2C>/export_output/manifests/<tag>_ops.yaml ops_config/
@@ -43,26 +40,17 @@ pixi run config
 pixi run build
 ```
 
-- Operator pruning: EXECUTORCH_SELECT_OPS_LIST registers only the operators in
-  the manifests; the full portable_ops_lib is not linked.
-- Dtype (precision) pruning: a selected_op_variants.h header is generated from
-  the merged manifest and combined with EXECUTORCH_SELECTIVE_BUILD_DTYPE so
-  portable kernels keep only the dtype variants actually used. Upstream
-  ExecuTorch only supports dtype-selective-build from a single .pte model, so
-  this is driven by the multi-model merged manifest instead.
+- Operator pruning: EXECUTORCH_SELECT_OPS_LIST registers only the operators in the manifests; the full portable_ops_lib is not linked.
+- Dtype (precision) pruning: a selected_op_variants.h header is generated from the merged manifest and combined with EXECUTORCH_SELECTIVE_BUILD_DTYPE so portable kernels keep only the dtype variants actually used. Upstream ExecuTorch only supports dtype-selective-build from a single .pte model, so this is driven by the multi-model merged manifest instead.
 
 Relevant CMake options:
 
 - PHONO_OPS_CONFIG_DIR (default `ops_config/`): where manifests are read from.
-- PHONO_OPS_MANIFESTS: explicit, semicolon-separated list of manifest files to
-  merge (default: the `<tag>_ops.yaml` merged manifest in PHONO_OPS_CONFIG_DIR;
-  if none, per-model `*_ops.yaml` files are merged).
-- PHONO_DTYPE_SELECTIVE_BUILD (default ON): set OFF to keep operator pruning
-  only.
+- PHONO_OPS_MANIFESTS: explicit, semicolon-separated list of manifest files to merge (default: the `<tag>_ops.yaml` merged manifest in PHONO_OPS_CONFIG_DIR; if none, per-model `*_ops.yaml` files are merged).
+- PHONO_DTYPE_SELECTIVE_BUILD (default ON): set OFF to keep operator pruning only.
 - PHONO_USE_INSTALLED_EXECUTORCH, EXECUTORCH_SOURCE_DIR: unchanged.
 
-When no manifest is present the build automatically falls back to the full
-kernel library (previous behavior).
+When no manifest is present the build automatically falls back to the full kernel library (previous behavior).
 
 ## Linux
 
@@ -122,4 +110,4 @@ On Windows, CMake defines NOMINMAX and WIN32_LEAN_AND_MEAN to avoid windows.h ma
 
 - ExecuTorch clone fails: check the network and proxy settings, delete third_party/executorch and retry pixi run setup.
 - zh2Hans codegen fails: make sure pixi run config runs inside the pixi environment (the configure step invokes Python3 to run codegen/zh2hans_codegen.py); reproduce with `python codegen/zh2hans_codegen.py --input res/zh2hans.json --output src/gen/zh2hansdict.h`.
-- Model fails to load: the package must use v2.1 (model_format_version is the string `"2.1"`, and pre exposes pre_model_pass1, pre_model_cross_kv and pre_model_pass2); v2 and earlier formats are unsupported.
+- Model fails to load: the package must use v2.2 (`model_format_version` is the string `"2.2"`); pre exposes `pre_model_pass1`, `pre_model_cross_kv`, and `pre_model_pass2`. A declared segmenter must also provide its PTE program and character vocabulary.

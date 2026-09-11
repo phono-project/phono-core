@@ -16,10 +16,13 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include <nlohmann/json.hpp>
+
+#include "core/pinyin_normalizer.hpp"
 
 namespace phono::core {
 
@@ -28,6 +31,7 @@ namespace phono::core {
 enum class CoreConfigError {
     Ok = 0,
     InvalidJson,
+    UnsupportedSchemaVersion,
     BeamSizeMismatch,          // beam_size does not match the model batch width
     MaxContextLengthExceeded,  // max_context_length + 1 does not fit pre max_seqlen
     MaxPinyinLengthInvalid,    // max_pinyin_length out of range / exceeds post model limit
@@ -39,15 +43,41 @@ enum class CoreConfigError {
 
 const char* core_config_error_name(CoreConfigError error);
 
+enum class SegmentMode { Strict, Safe };
+
+enum class EngineConfigError {
+    Ok = 0,
+    InvalidJson,
+    UnsupportedSchemaVersion,
+    InvalidTokenizerConfig,
+    InvalidSegmentMode,
+    MaxPinyinCharsInvalid,
+};
+
+const char* engine_config_error_name(EngineConfigError error);
+
+struct TokenizerEngineConfig {
+    PinyinNormalizationConfig normalization;
+    SegmentMode segment_mode = SegmentMode::Safe;
+    bool repair = false;
+    int32_t max_pinyin_chars = 128;
+};
+
+struct EngineConfig {
+    TokenizerEngineConfig tokenizer;
+};
+
+EngineConfigError parse_engine_config(const nlohmann::json& json, EngineConfig& out);
+
 class ModelPackageConfig;  // fwd decl, defined below
 
-// Mirrors base.yaml's `common:` section.
+// Mirrors config.json's `common` object.
 struct CommonConfig {
     int32_t model_dim = 768;
     double rope_theta = 1000.0;
 };
 
-// Mirrors base.yaml's `pre_model:` section.
+// Mirrors config.json's `pre_model` object.
 struct PreModelDims {
     int32_t max_seqlen = 128;
     int32_t mhsa_layers = 8;
@@ -58,7 +88,7 @@ struct PreModelDims {
     int32_t self_head_dim() const { return attn_dim / mhsa_heads; }
 };
 
-// Mirrors base.yaml's `post_model:` section.
+// Mirrors config.json's `post_model` object.
 struct PostModelDims {
     int32_t max_seqlen = 32;
     int32_t mhsa_layers = 12;
@@ -72,7 +102,7 @@ struct PostModelDims {
     int32_t cross_head_dim() const { return mhca_attn_dim / mhca_heads; }
 };
 
-// Mirrors the tokenizer's own YAML `vocabs:` section.
+// Mirrors config.json's `vocabs` object.
 struct VocabPaths {
     std::string chinese_vocab = "vocabs/chinese_vocab.txt";
     std::string context_vocab = "vocabs/context_vocab.txt";
@@ -80,8 +110,8 @@ struct VocabPaths {
     std::vector<std::string> context_special_tokens = {"bos_token"};
 };
 
-// The on-device runtime (core_config) that drives the inference session and
-// the context slot manager. It is user supplied at runtime (e.g. passed to
+// The context-manager/session runtime config. Engine-wide tokenizer and
+// segmentation policy lives in EngineConfig instead. It is user supplied at runtime (e.g. passed to
 // the C API as a JSON string) and must be validated against the loaded
 // model's hard limits before use.
 //
@@ -129,10 +159,23 @@ struct RuntimeParams {
     std::string post_method = "post_model";
 };
 
+// Optional gap-scoring model bundled with a v2.2 package. Its absence is a
+// supported state: the engine remains usable and auto-segmentation routes to
+// checked FMM with a diagnostic warning.
+struct SegmenterConfig {
+    std::string model_path = "bins/pinyin_segment.pte";
+    std::string method = "forward";
+    std::string char_vocab = "vocabs/pinyin_char_vocab.txt";
+    int32_t min_input_chars = 3;
+    int32_t max_input_chars = 512;
+    std::string layout = "BHWC";
+    std::string quantization = "none";
+};
+
 // Top level configuration struct.
 class ModelPackageConfig {
 public:
-    static constexpr const char* kSupportedFormatVersion = "2.1";
+    static constexpr const char* kSupportedFormatVersion = "2.2";
 
     // Loads and validates `<package_root>/config.json`.
     static ModelPackageConfig load(const std::string& package_root);
@@ -146,6 +189,7 @@ public:
     PostModelDims post_model;
     VocabPaths vocabs;
     RuntimeParams runtime;
+    std::optional<SegmenterConfig> segmenter;
 
     std::string model_version = "";
     std::string model_format_version;

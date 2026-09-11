@@ -1,0 +1,40 @@
+model:
+  format_version: '1.0'
+  quantization: none
+  layout: BHWC
+operators:
+  aten::embedding.out:
+    is_root_operator: true
+    is_used_for_training: false
+    include_all_overloads: false
+    debug_info: [phono-pinyin-segment]
+  aten::native_layer_norm.out:
+    is_root_operator: true
+    is_used_for_training: false
+    include_all_overloads: false
+    debug_info: [phono-pinyin-segment]
+  aten::squeeze_copy.dims_out:
+    is_root_operator: true
+    is_used_for_training: false
+    include_all_overloads: false
+    debug_info: [phono-pinyin-segment]
+  aten::unsqueeze_copy.out:
+    is_root_operator: true
+    is_used_for_training: false
+    include_all_overloads: false
+    debug_info: [phono-pinyin-segment]
+custom_classes: []
+build_features: []
+include_all_non_op_selectives: false
+include_all_operators: false
+kernel_metadata: {}
+et_kernel_metadata:
+  aten::embedding.out:
+  - v1/6;0,1|4;0,1|6;0,1,2|6;0,1,2
+  aten::native_layer_norm.out:
+  - v1/6;0,1,2,3|6;0|6;0|6;0,1,2,3|6;0,1,2,3|6;0,1,2,3|6;0,1,2,3
+  aten::squeeze_copy.dims_out:
+  - v1/6;0,1,2,3|6;0,1,2|6;0,1,2
+  - v1/6;0,1,2|6;0,1|6;0,1
+  aten::unsqueeze_copy.out:
+  - v1/6;0,1,2|6;0,1,2,3|6;0,1,2,3

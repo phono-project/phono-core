@@ -22,7 +22,10 @@ namespace {
 
 using phono::core::CoreConfig;
 using phono::core::CoreConfigError;
+using phono::core::EngineConfig;
+using phono::core::EngineConfigError;
 using phono::core::parse_core_config;
+using phono::core::parse_engine_config;
 using phono::engine::GenerateResult;
 using phono::engine::InferenceError;
 using phono::engine::InferenceEngine;
@@ -38,6 +41,7 @@ phono_status map_inference_error(InferenceError error) {
         case InferenceError::InvalidArgument: return PHONO_INVALID_ARGUMENT;
         case InferenceError::ContextLimitExceeded: return PHONO_CONTEXT_LIMIT_EXCEEDED;
         case InferenceError::PinyinLimitExceeded: return PHONO_PINYIN_LIMIT_EXCEEDED;
+        case InferenceError::InvalidPinyin: return PHONO_INVALID_PINYIN;
         case InferenceError::NoCandidates: return PHONO_NO_CANDIDATES;
         case InferenceError::Cancelled: return PHONO_CANCELLED;
         case InferenceError::ModelError: return PHONO_MODEL_ERROR;
@@ -85,6 +89,33 @@ phono_status parse_core_config_string(InferenceEngine& engine, const char* core_
     return PHONO_OK;
 }
 
+phono_status parse_engine_config_string(const char* engine_config_json, EngineConfig& out) {
+    if (engine_config_json == nullptr || *engine_config_json == '\0') {
+        set_last_error("engine_config_json is empty");
+        return PHONO_CONFIG_ERROR;
+    }
+    nlohmann::json options;
+    try {
+        options = nlohmann::json::parse(engine_config_json);
+    } catch (const std::exception& e) {
+        set_last_error(std::string("engine_config is not valid JSON: ") + e.what());
+        return PHONO_CONFIG_ERROR;
+    }
+    const EngineConfigError error = parse_engine_config(options, out);
+    if (error != EngineConfigError::Ok) {
+        set_last_error(std::string("engine_config rejected: ") +
+                       phono::core::engine_config_error_name(error));
+        return PHONO_CONFIG_ERROR;
+    }
+    return PHONO_OK;
+}
+
+char* copy_string(const std::string& value) {
+    char* buffer = static_cast<char*>(std::malloc(value.size() + 1));
+    if (buffer != nullptr) std::memcpy(buffer, value.c_str(), value.size() + 1);
+    return buffer;
+}
+
 // Convenience: builds the C++ view of a token-id vector into the caller's
 // malloc'd buffer.
 phono_status copy_ids(const std::vector<int32_t>& ids, int32_t** out_ids, int32_t* out_count) {
@@ -106,45 +137,14 @@ phono_status copy_ids(const std::vector<int32_t>& ids, int32_t** out_ids, int32_
     return PHONO_OK;
 }
 
-phono_status copy_strings(const std::vector<std::string>& strings, char*** out_strings,
-                          int32_t* out_count) {
-    if (out_strings == nullptr || out_count == nullptr) {
-        return PHONO_INVALID_ARGUMENT;
-    }
-    *out_strings = nullptr;
-    *out_count = 0;
-    if (strings.empty()) {
-        return PHONO_OK;
-    }
-
-    size_t text_bytes = 0;
-    for (const auto& string : strings) {
-        text_bytes += string.size() + 1;
-    }
-    const size_t pointer_bytes = strings.size() * sizeof(char*);
-    auto** output = static_cast<char**>(std::malloc(pointer_bytes + text_bytes));
-    if (output == nullptr) {
-        return PHONO_MODEL_ERROR;
-    }
-
-    char* cursor = reinterpret_cast<char*>(output) + pointer_bytes;
-    for (size_t i = 0; i < strings.size(); ++i) {
-        output[i] = cursor;
-        std::memcpy(cursor, strings[i].c_str(), strings[i].size() + 1);
-        cursor += strings[i].size() + 1;
-    }
-    *out_strings = output;
-    *out_count = static_cast<int32_t>(strings.size());
-    return PHONO_OK;
-}
-
 }  // namespace
 
 extern "C" {
 
 // ── engine ────────────────────────────────────────────────────────────────
 
-phono_status phono_engine_create(const char* model_package_dir, phono_engine** out_engine) {
+phono_status phono_engine_create(const char* model_package_dir, const char* engine_config_json,
+                                 phono_engine** out_engine) {
     if (out_engine == nullptr) {
         return PHONO_INVALID_ARGUMENT;
     }
@@ -153,10 +153,17 @@ phono_status phono_engine_create(const char* model_package_dir, phono_engine** o
         set_last_error("model_package_dir is empty");
         return PHONO_INVALID_ARGUMENT;
     }
+    EngineConfig engine_config;
+    const phono_status config_status =
+        parse_engine_config_string(engine_config_json, engine_config);
+    if (config_status != PHONO_OK) return config_status;
     try {
-        auto* engine = new InferenceEngine(model_package_dir);
+        auto* engine = new InferenceEngine(model_package_dir, std::move(engine_config));
         *out_engine = reinterpret_cast<phono_engine*>(engine);
         return PHONO_OK;
+    } catch (const std::invalid_argument& e) {
+        set_last_error(std::string("engine_config rejected: ") + e.what());
+        return PHONO_CONFIG_ERROR;
     } catch (const std::exception& e) {
         set_last_error(std::string("failed to load model package: ") + e.what());
         return PHONO_MODEL_ERROR;
@@ -187,17 +194,91 @@ int32_t phono_engine_beam_size(const phono_engine* engine) {
                                                          : e->config().runtime.batch_size);
 }
 
-// ── tokenizer ─────────────────────────────────────────────────────────────
-
-phono_status phono_tokenizer_separate_greedy(const phono_engine* engine, const char* pinyin,
-                                              char*** out_syllables, int32_t* out_count) {
+char* phono_engine_info_json(const phono_engine* engine) {
     const auto* e = reinterpret_cast<const InferenceEngine*>(engine);
-    if (e == nullptr || out_syllables == nullptr || out_count == nullptr) {
+    if (e == nullptr) return nullptr;
+    nlohmann::json info = {
+        {"schema_version", "1.0"},
+        {"model_version", e->config().model_version},
+        {"model_format_version", e->config().model_format_version},
+        {"segmenter", {
+            {"available", e->smart_segmenter_available()},
+            {"fallback", e->smart_segmenter_available() ? nullptr : nlohmann::json("checked_fmm")},
+        }},
+        {"diagnostics", e->diagnostics()},
+    };
+    return copy_string(info.dump());
+}
+
+phono_status phono_engine_segment_pinyin(const phono_engine* engine,
+                                         const char* request_json,
+                                         char** out_result_json) {
+    const auto* e = reinterpret_cast<const InferenceEngine*>(engine);
+    if (e == nullptr || request_json == nullptr || out_result_json == nullptr) {
         return PHONO_INVALID_ARGUMENT;
     }
-    const std::string input = pinyin == nullptr ? std::string() : std::string(pinyin);
-    return copy_strings(e->tokenizer().separate_greedy(input), out_syllables, out_count);
+    *out_result_json = nullptr;
+    nlohmann::json request;
+    try {
+        request = nlohmann::json::parse(request_json);
+        if (!request.is_object() ||
+            request.value("schema_version", std::string()) != "1.0" ||
+            !request.contains("input") || !request.at("input").is_string()) {
+            set_last_error("segmentation request must use schema_version 1.0 and string input");
+            return PHONO_CONFIG_ERROR;
+        }
+    } catch (const std::exception& error) {
+        set_last_error(std::string("segmentation request is not valid JSON: ") + error.what());
+        return PHONO_CONFIG_ERROR;
+    }
+
+    const auto segmented = e->segment_pinyin(request.at("input").get<std::string>());
+    const phono_status status = map_inference_error(segmented.error);
+    nlohmann::json ranges = nlohmann::json::array();
+    for (const auto& range : segmented.invalid_ranges) {
+        ranges.push_back({
+            {"begin", range.begin}, {"end", range.end}, {"text", range.text},
+            {"replacement", range.replacement},
+        });
+    }
+    nlohmann::json events = nlohmann::json::array();
+    for (const auto& event : segmented.normalization_events) {
+        events.push_back({
+            {"type", event.type}, {"begin", event.begin}, {"end", event.end},
+            {"before", event.before}, {"after", event.after},
+        });
+    }
+    std::vector<int32_t> pinyin_ids;
+    pinyin_ids.reserve(segmented.segments.size());
+    for (const auto& token : segmented.segments) {
+        const auto id = e->tokenizer().find_pinyin_id_exact(token);
+        if (!id) {
+            set_last_error("internal segmentation result is absent from pinyin vocabulary");
+            return PHONO_MODEL_ERROR;
+        }
+        pinyin_ids.push_back(*id);
+    }
+    nlohmann::json response = {
+        {"schema_version", "1.0"},
+        {"status", {{"ok", status == PHONO_OK}, {"code", phono_error_name(status)}}},
+        {"input", segmented.input},
+        {"canonical_input", segmented.canonical_input},
+        {"normalized_input", segmented.normalized_input},
+        {"strategy", segmented.strategy},
+        {"segments", segmented.segments},
+        {"pinyin_ids", pinyin_ids},
+        {"invalid_ranges", std::move(ranges)},
+        {"normalization_events", std::move(events)},
+    };
+    *out_result_json = copy_string(response.dump());
+    if (*out_result_json == nullptr) return PHONO_MODEL_ERROR;
+    if (status != PHONO_OK) {
+        set_last_error(std::string("pinyin segmentation failed: ") + phono_error_name(status));
+    }
+    return status;
 }
+
+// ── tokenizer ─────────────────────────────────────────────────────────────
 
 phono_status phono_tokenizer_encode_context(const phono_engine* engine, const char* text_utf8,
                                             int32_t** out_ids, int32_t* out_count) {
@@ -209,22 +290,12 @@ phono_status phono_tokenizer_encode_context(const phono_engine* engine, const ch
     return copy_ids(e->tokenizer().encode_context(text), out_ids, out_count);
 }
 
-phono_status phono_tokenizer_encode_pinyin(const phono_engine* engine,
-                                           const char* const* syllables, int32_t num_syllables,
-                                           int32_t** out_ids, int32_t* out_count) {
+int32_t phono_tokenizer_find_pinyin_id_exact(const phono_engine* engine,
+                                             const char* token) {
     const auto* e = reinterpret_cast<const InferenceEngine*>(engine);
-    if (e == nullptr || out_ids == nullptr || out_count == nullptr) {
-        return PHONO_INVALID_ARGUMENT;
-    }
-    if (num_syllables < 0 || (num_syllables > 0 && syllables == nullptr)) {
-        return PHONO_INVALID_ARGUMENT;
-    }
-    std::vector<std::string> list;
-    list.reserve(static_cast<size_t>(num_syllables));
-    for (int32_t i = 0; i < num_syllables; ++i) {
-        list.emplace_back(syllables[i] == nullptr ? std::string() : std::string(syllables[i]));
-    }
-    return copy_ids(e->tokenizer().encode_pinyin(list), out_ids, out_count);
+    if (e == nullptr || token == nullptr) return -1;
+    const auto id = e->tokenizer().find_pinyin_id_exact(token);
+    return id ? *id : -1;
 }
 
 char* phono_tokenizer_decode(const phono_engine* engine, const int32_t* ids, int32_t count) {
@@ -499,6 +570,7 @@ const char* phono_error_name(phono_status status) {
         case PHONO_INVALID_ARGUMENT: return "invalid_argument";
         case PHONO_CONTEXT_LIMIT_EXCEEDED: return "context_limit_exceeded";
         case PHONO_PINYIN_LIMIT_EXCEEDED: return "pinyin_limit_exceeded";
+        case PHONO_INVALID_PINYIN: return "invalid_pinyin";
         case PHONO_NO_CANDIDATES: return "no_candidates";
         case PHONO_CANCELLED: return "cancelled";
         case PHONO_MODEL_ERROR: return "model_error";

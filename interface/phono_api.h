@@ -4,11 +4,9 @@
 // as libphono_core.so / phono_core.dll / libphono_core.dylib; see the
 // phono_core_shared CMake target.
 //
-// The runtime core_config is handed to the library as a plain JSON string
-// (the same file that a demo or the package's core_configs/default.json
-// carries). The library parses and validates it internally against the loaded
-// model's hard limits and reports a phono_status error enum instead of
-// crashing when a parameter does not fit.
+// Engine/tokenizer policy and context/session limits are separate versioned
+// JSON documents. The library parses and validates both, reporting a
+// phono_status error enum instead of allowing exceptions across the ABI.
 //
 // A session is stateless: no context is bound at creation and every call
 // takes an explicit phono_context slot, so one session can drive many slots.
@@ -43,6 +41,7 @@ typedef enum phono_status {
     PHONO_INVALID_ARGUMENT,
     PHONO_CONTEXT_LIMIT_EXCEEDED,
     PHONO_PINYIN_LIMIT_EXCEEDED,
+    PHONO_INVALID_PINYIN,
     PHONO_NO_CANDIDATES,
     PHONO_CANCELLED,
     PHONO_MODEL_ERROR,
@@ -69,33 +68,38 @@ typedef struct phono_generate_result {
 } phono_generate_result;
 
 // ------ engine ------
-// Loads a model package directory. Returns PHONO_MODEL_ERROR (and records a
-// message retrievable via phono_last_error_message) on failure.
+// Loads a model package directory with a versioned engine_config JSON object.
+// Returns PHONO_MODEL_ERROR for package failures or PHONO_CONFIG_ERROR for an
+// invalid runtime configuration.
 PHONO_API phono_status phono_engine_create(const char* model_package_dir,
+                                           const char* engine_config_json,
                                            phono_engine** out_engine);
 PHONO_API void phono_engine_destroy(phono_engine* engine);
 PHONO_API int32_t phono_engine_pre_max_seqlen(const phono_engine* engine);
 PHONO_API int32_t phono_engine_post_max_seqlen(const phono_engine* engine);
 PHONO_API int32_t phono_engine_beam_size(const phono_engine* engine);
+// Returns a malloc-owned versioned JSON document; free with phono_free.
+PHONO_API char* phono_engine_info_json(const phono_engine* engine);
+
+// Versioned JSON request/response endpoint for automatic pinyin segmentation.
+// A result document is returned even for PHONO_INVALID_PINYIN when allocation
+// succeeds, so callers can display invalid_ranges.
+PHONO_API phono_status phono_engine_segment_pinyin(const phono_engine* engine,
+                                                   const char* request_json,
+                                                   char** out_result_json);
 
 // ------ tokenizer ------
 // Output arrays are malloc-allocated and owned by the caller (free with
 // phono_free). Decoded strings are malloc-allocated too.
 // The separated syllable strings and their pointer array occupy one allocation;
 // call phono_free once on the returned array, not on individual strings.
-PHONO_API phono_status phono_tokenizer_separate_greedy(const phono_engine* engine,
-                                                       const char* pinyin,
-                                                       char*** out_syllables,
-                                                       int32_t* out_count);
 PHONO_API phono_status phono_tokenizer_encode_context(const phono_engine* engine,
                                                       const char* text_utf8,
                                                       int32_t** out_ids,
                                                       int32_t* out_count);
-PHONO_API phono_status phono_tokenizer_encode_pinyin(const phono_engine* engine,
-                                                     const char* const* syllables,
-                                                     int32_t num_syllables,
-                                                     int32_t** out_ids,
-                                                     int32_t* out_count);
+// Exact lookup only. Returns -1 when the token is absent.
+PHONO_API int32_t phono_tokenizer_find_pinyin_id_exact(const phono_engine* engine,
+                                                       const char* token);
 PHONO_API char* phono_tokenizer_decode(const phono_engine* engine,
                                        const int32_t* ids, int32_t count);
 PHONO_API int32_t phono_tokenizer_chinese_to_context(const phono_engine* engine,

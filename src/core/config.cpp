@@ -36,6 +36,7 @@ const char* core_config_error_name(CoreConfigError error) {
     switch (error) {
         case CoreConfigError::Ok: return "ok";
         case CoreConfigError::InvalidJson: return "invalid_json";
+        case CoreConfigError::UnsupportedSchemaVersion: return "unsupported_schema_version";
         case CoreConfigError::BeamSizeMismatch: return "beam_size_mismatch";
         case CoreConfigError::MaxContextLengthExceeded: return "max_context_length_exceeded";
         case CoreConfigError::MaxPinyinLengthInvalid: return "max_pinyin_length_invalid";
@@ -45,6 +46,75 @@ const char* core_config_error_name(CoreConfigError error) {
         case CoreConfigError::DecayInvalid: return "decay_config_invalid";
     }
     return "unknown";
+}
+
+const char* engine_config_error_name(EngineConfigError error) {
+    switch (error) {
+        case EngineConfigError::Ok: return "ok";
+        case EngineConfigError::InvalidJson: return "invalid_json";
+        case EngineConfigError::UnsupportedSchemaVersion: return "unsupported_schema_version";
+        case EngineConfigError::InvalidTokenizerConfig: return "invalid_tokenizer_config";
+        case EngineConfigError::InvalidSegmentMode: return "invalid_segment_mode";
+        case EngineConfigError::MaxPinyinCharsInvalid: return "max_pinyin_chars_invalid";
+    }
+    return "unknown";
+}
+
+EngineConfigError parse_engine_config(const json& input, EngineConfig& out) {
+    json object;
+    if (input.is_string()) {
+        try {
+            object = json::parse(input.get<std::string>());
+        } catch (...) {
+            return EngineConfigError::InvalidJson;
+        }
+    } else if (input.is_object()) {
+        object = input;
+    } else {
+        return EngineConfigError::InvalidJson;
+    }
+
+    EngineConfig candidate;
+    try {
+        if (object.value("schema_version", std::string()) != "1.0") {
+            return EngineConfigError::UnsupportedSchemaVersion;
+        }
+        const json tokenizer = object.value("tokenizer", json::object());
+        if (!tokenizer.is_object()) return EngineConfigError::InvalidTokenizerConfig;
+        const json normalization = tokenizer.value("normalization", json::object());
+        if (!normalization.is_object()) return EngineConfigError::InvalidTokenizerConfig;
+
+        candidate.tokenizer.normalization.lowercase_ascii = normalization.value(
+            "lowercase_ascii", candidate.tokenizer.normalization.lowercase_ascii);
+        candidate.tokenizer.normalization.normalize_v_to_u = normalization.value(
+            "normalize_v_to_u", candidate.tokenizer.normalization.normalize_v_to_u);
+        candidate.tokenizer.normalization.separators = normalization.value(
+            "separators", candidate.tokenizer.normalization.separators);
+        candidate.tokenizer.repair = tokenizer.value("repair", candidate.tokenizer.repair);
+        candidate.tokenizer.max_pinyin_chars = tokenizer.value(
+            "max_pinyin_chars", candidate.tokenizer.max_pinyin_chars);
+        const std::string mode = tokenizer.value("segment_mode", std::string("safe"));
+        if (mode == "strict") {
+            candidate.tokenizer.segment_mode = SegmentMode::Strict;
+        } else if (mode == "safe") {
+            candidate.tokenizer.segment_mode = SegmentMode::Safe;
+        } else {
+            return EngineConfigError::InvalidSegmentMode;
+        }
+    } catch (...) {
+        return EngineConfigError::InvalidJson;
+    }
+
+    if (candidate.tokenizer.max_pinyin_chars <= 0) {
+        return EngineConfigError::MaxPinyinCharsInvalid;
+    }
+    const auto& separators = candidate.tokenizer.normalization.separators;
+    if (separators.empty() || separators.find_first_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") !=
+                                  std::string::npos) {
+        return EngineConfigError::InvalidTokenizerConfig;
+    }
+    out = std::move(candidate);
+    return EngineConfigError::Ok;
 }
 
 CoreConfig default_core_config(const ModelPackageConfig& model) {
@@ -82,6 +152,9 @@ CoreConfigError parse_core_config(const json& input,
     // value that is valid for this model, then overlay the supplied keys.
     CoreConfig candidate = default_core_config(model);
     try {
+        if (object.value("schema_version", std::string()) != "1.0") {
+            return CoreConfigError::UnsupportedSchemaVersion;
+        }
         candidate.beam_size = object.value("beam_size", candidate.beam_size);
         candidate.slack_interval = object.value("slack_interval", candidate.slack_interval);
         candidate.min_accept_context = object.value("min_accept_context", candidate.min_accept_context);
@@ -142,14 +215,14 @@ ModelPackageConfig ModelPackageConfig::load(const std::string& package_root) {
     cfg.package_root = package_root;
 
     const fs::path config_path = fs::path(package_root) / "config.json";
-    std::ifstream in(config_path);
-    if (!in.is_open()) {
-        throw std::runtime_error("ModelPackageConfig::load: cannot open " + config_path.string());
+    std::ifstream input(config_path);
+    if (!input.is_open()) {
+        throw std::runtime_error("ModelPackageConfig::load: cannot open " +
+                                 config_path.string());
     }
-
     json root;
     try {
-        in >> root;
+        input >> root;
     } catch (const std::exception& e) {
         std::ostringstream oss;
         oss << "ModelPackageConfig::load: failed to parse " << config_path << ": " << e.what();
@@ -220,6 +293,19 @@ ModelPackageConfig ModelPackageConfig::load(const std::string& package_root) {
         cfg.runtime.post_method = get_or<std::string>(r, "post_method", cfg.runtime.post_method);
     }
 
+    if (root.contains("segmenter")) {
+        const json& s = root.at("segmenter");
+        SegmenterConfig segmenter;
+        segmenter.model_path = get_or<std::string>(s, "model_path", segmenter.model_path);
+        segmenter.method = get_or<std::string>(s, "method", segmenter.method);
+        segmenter.char_vocab = get_or<std::string>(s, "char_vocab", segmenter.char_vocab);
+        segmenter.min_input_chars = get_or<int32_t>(s, "min_input_chars", segmenter.min_input_chars);
+        segmenter.max_input_chars = get_or<int32_t>(s, "max_input_chars", segmenter.max_input_chars);
+        segmenter.layout = get_or<std::string>(s, "layout", segmenter.layout);
+        segmenter.quantization = get_or<std::string>(s, "quantization", segmenter.quantization);
+        cfg.segmenter = std::move(segmenter);
+    }
+
     if (cfg.pre_model.mhsa_heads <= 0 || cfg.pre_model.attn_dim % cfg.pre_model.mhsa_heads != 0) {
         throw std::runtime_error("ModelPackageConfig::load: pre_model.attn_dim not divisible by mhsa_heads");
     }
@@ -231,6 +317,16 @@ ModelPackageConfig ModelPackageConfig::load(const std::string& package_root) {
     }
     if (cfg.runtime.batch_size <= 0) {
         throw std::runtime_error("ModelPackageConfig::load: runtime.batch_size must be positive");
+    }
+    if (cfg.segmenter &&
+        (cfg.segmenter->min_input_chars < 3 ||
+         cfg.segmenter->max_input_chars < cfg.segmenter->min_input_chars ||
+         cfg.segmenter->layout != "BHWC" ||
+         (cfg.segmenter->quantization != "none" &&
+          cfg.segmenter->quantization != "w8a8"))) {
+        throw std::runtime_error(
+            "ModelPackageConfig::load: segmenter requires BHWC, valid input limits, "
+            "and quantization none or w8a8");
     }
 
     return cfg;

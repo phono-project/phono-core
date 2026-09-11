@@ -1,55 +1,69 @@
-# core_config Reference
+# Runtime configuration reference
 
-The core_config is the runtime configuration, kept separate from the model package. It is a JSON object: the demos read it from the package's core_configs/default.json or take a custom JSON file as a command-line argument, and the C call convention hands the whole core_config to the shared library as a JSON string that the library parses and validates internally.
+Runtime policy is deliberately separate from the model package and split into two versioned JSON documents. Every document requires the string `"schema_version": "1.0"`; missing and unknown versions return `PHONO_CONFIG_ERROR`.
 
-The configuration is validated against the model package's hard limits at parse time. When a parameter does not satisfy the constraints, an error enum code is returned (CoreConfigError on the C++ side, PHONO_CONFIG_ERROR on the C side) instead of throwing or silently falling back.
+## Engine and tokenizer policy
 
-## Options
+`core_configs/engine_config.json` is passed to `phono_engine_create`:
 
-| Key | Description | Constraint | Default (model-derived) |
-| --- | --- | --- | --- |
-| beam_size | Beam-search width; must equal the model's beam/batch width | equal to the pre pass 2 batch size | model batch size |
-| slack_interval | Window slack left over when truncation is triggered | 0 <= slack_interval < max_history_length | 8 |
-| min_accept_context | Minimum reusable suffix length required for slot reuse | > 0 | 8 |
-| max_context_length | Committed context-id capacity per slot | <= pre_model.max_seqlen - 1 | pre_model.max_seqlen - 1 |
-| max_history_length | Soft cap on committed history; truncated before generation once reached | must satisfy max_history_length < max_context_length - max_pinyin_length | max_context_length - max_pinyin_length - 1 |
-| max_pinyin_length | Upper bound of the pinyin window | >= 1 and <= post_model.max_seqlen (the post hard limit) | post_model.max_seqlen |
-| trial_ratio | Fraction of slots allowed in the trial pool for eviction | 0 < trial_ratio <= 1 | 0.25 |
-| decay_alpha | Exponent of slot value growth with length | >= 0 | 0.5 |
-| decay_lambda | Rate of slot value decay over time | >= 0 | 1/60 |
+```json
+{
+  "schema_version": "1.0",
+  "tokenizer": {
+    "normalization": {
+      "lowercase_ascii": true,
+      "normalize_v_to_u": true,
+      "separators": "'"
+    },
+    "segment_mode": "safe",
+    "repair": false,
+    "max_pinyin_chars": 128
+  }
+}
+```
 
-Keys that are absent use the model-derived defaults, so even an empty object parses to a legal configuration for the current model. The legacy key names N and T have been replaced by slack_interval and min_accept_context and no longer have any effect.
+| Key | Meaning |
+| --- | --- |
+| `lowercase_ascii` | Convert ASCII uppercase letters before matching |
+| `normalize_v_to_u` | Convert `v` to `u` only after `j/q/x/y` in the same separator-delimited run |
+| `separators` | Characters removed while forcing a syllable boundary |
+| `segment_mode` | `safe` returns valid output plus invalid ranges; `strict` rejects any invalid route |
+| `repair` | In safe mode, repair each invalid character to its nearest legal token instead of deleting it |
+| `max_pinyin_chars` | Maximum normalized character count accepted by the segmentation endpoint |
 
-## Model-Derived Defaults
+`max_pinyin_chars` limits raw segmentation work. It is distinct from `max_pinyin_length`, which limits the number of syllable IDs passed to the P2C model. See [Smart Pinyin Segmentation](pinyin-segmentation.md) for routing, normalization, and response schemas.
 
-Given the dimensions in the package's config.json, the defaults are derived as follows:
+## Context and session policy
 
-- beam_size is runtime.batch_size (the pre pass 2 batch size);
-- max_context_length is pre_model.max_seqlen - 1;
-- max_pinyin_length is post_model.max_seqlen;
-- max_history_length is max_context_length - max_pinyin_length - 1, guaranteeing it stays strictly below max_context_length - max_pinyin_length;
-- slack_interval is min(8, max_history_length - 1).
+`core_configs/context_manager.json` is passed independently to `phono_context_manager_create` and `phono_session_create`:
 
-The shipped core_configs/default.json targets the v2_0_alpha_05 model (pre max_seqlen 128, post max_seqlen 32, batch 3): beam_size 3, slack_interval 8, min_accept_context 8, max_context_length 127, max_history_length 94, max_pinyin_length 32.
+```json
+{
+  "schema_version": "1.0",
+  "beam_size": 3,
+  "slack_interval": 8,
+  "min_accept_context": 8,
+  "max_context_length": 127,
+  "max_history_length": 94,
+  "max_pinyin_length": 32,
+  "trial_ratio": 0.25,
+  "decay_alpha": 0.5,
+  "decay_lambda": 0.02
+}
+```
 
-## Windowing Mechanism
+| Key | Constraint | Default when omitted |
+| --- | --- | --- |
+| `beam_size` | Equals the pre pass-2 batch size | Model batch size |
+| `slack_interval` | `0 <= value < max_history_length` | Up to 8 |
+| `min_accept_context` | Greater than zero | 8 |
+| `max_context_length` | At most `pre_model.max_seqlen - 1` | That maximum |
+| `max_history_length` | Less than `max_context_length - max_pinyin_length` | Largest legal value |
+| `max_pinyin_length` | `1..post_model.max_seqlen` | Post-model maximum |
+| `trial_ratio` | `(0,1]` | 0.25 |
+| `decay_alpha` | Non-negative | 0.5 |
+| `decay_lambda` | Non-negative | 1/60 |
 
-The pre model has a hard sequence-length cap pre_model.max_seqlen and the post model has a hard input-length cap post_model.max_seqlen. To keep the context from growing unboundedly and the state from becoming inconsistent, two runtime caps govern the window:
+Fields other than `schema_version` may be omitted and use model-derived defaults. Unknown legacy names such as `N` and `T` have no effect.
 
-- Pinyin window: the number of pinyin syllables fed to generate must not exceed max_pinyin_length, nor the post model's hard limit post_model.max_seqlen. PinyinLimitExceeded is returned otherwise.
-- History window: the committed history must not exceed the soft cap max_history_length. When fill would push the history over the cap, it first truncates to max_history_length minus slack_interval (keeping the first BOS as the attention sink) and then appends; when generate starts and the history has already reached max_history_length, it truncates with the same rule first.
-
-Truncation is a left-shift window: the oldest tokens are dropped and the cache is shifted token-wise, with BOS always occupying position zero. This keeps the context bounded while retaining as much recent context as possible.
-
-## Consistency Constraints
-
-The following constraints are enforced at parse time, each returning its own error:
-
-- beam_size must equal the model's beam/batch width, otherwise BeamSizeMismatch;
-- max_context_length + 1 must not exceed pre_model.max_seqlen, otherwise MaxContextLengthExceeded;
-- max_pinyin_length must not exceed post_model.max_seqlen, otherwise MaxPinyinLengthInvalid;
-- max_history_length must be strictly less than max_context_length - max_pinyin_length, otherwise MaxHistoryLengthInvalid. This guarantees that even when both the history and the pinyin window hit their caps, the committed text cannot overflow the pre cache before the next screen-up;
-- slack_interval must lie in [0, max_history_length), otherwise SlackInvalid;
-- min_accept_context must be greater than 0, otherwise MinAcceptContextInvalid.
-
-The C++ error enum is core::CoreConfigError, convertible to a readable name with core_config_error_name; the C layer maps all of them to PHONO_CONFIG_ERROR with the reason available through phono_last_error_message.
+The history is a BOS-preserving left-shift window. When it reaches `max_history_length`, old tokens are discarded down to `max_history_length - slack_interval`. Violating a model limit returns `CoreConfigError` in C++ or `PHONO_CONFIG_ERROR` in C, with detail in `phono_last_error_message`.

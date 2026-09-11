@@ -136,48 +136,32 @@ int Tokenizer::edit_distance(const std::string& a, const std::string& b) {
     return dp[m][n];
 }
 
-std::vector<int32_t> Tokenizer::encode_pinyin(const std::vector<std::string>& pinyin_list) const {
-    std::vector<int32_t> ids;
-    ids.reserve(pinyin_list.size());
-    for (const auto& py : pinyin_list) {
-        auto it = pinyin_vocab_.find(py);
-        if (it != pinyin_vocab_.end()) {
-            ids.push_back(it->second);
-            continue;
-        }
-        // Fallback: nearest edit-distance match.
-        int32_t best_idx = 0;
-        int best_dist = std::numeric_limits<int>::max();
-        for (size_t i = 0; i < pinyin_list_.size(); ++i) {
-            const int d = edit_distance(py, pinyin_list_[i]);
-            if (d < best_dist) {
-                best_dist = d;
-                best_idx = static_cast<int32_t>(i);
-            }
-        }
-        ids.push_back(best_idx);
-    }
-    return ids;
+std::optional<int32_t> Tokenizer::find_pinyin_id_exact(std::string_view token) const {
+    const auto it = pinyin_vocab_.find(std::string(token));
+    if (it == pinyin_vocab_.end()) return std::nullopt;
+    return it->second;
 }
 
-std::vector<std::string> Tokenizer::separate_greedy(const std::string& pinyin) const {
-    std::vector<std::string> syllables;
-    size_t position = 0;
-    while (position < pinyin.size()) {
-        if (pinyin[position] == '\'') {
-            ++position;
-            continue;
-        }
-
-        const size_t breakpoint = pinyin.find('\'', position);
-        const size_t segment_end = breakpoint == std::string::npos ? pinyin.size() : breakpoint;
-        const size_t match_length = pinyin_tree_.longest_match(
-            std::string_view(pinyin.data(), segment_end), position);
-        const size_t token_length = match_length == 0 ? 1 : match_length;
-        syllables.emplace_back(pinyin.substr(position, token_length));
-        position += token_length;
+int32_t Tokenizer::find_pinyin_id_nearest(std::string_view token) const {
+    if (pinyin_list_.empty()) {
+        throw std::logic_error("Tokenizer: pinyin vocabulary is empty");
     }
-    return syllables;
+    int32_t best_idx = 0;
+    int best_dist = std::numeric_limits<int>::max();
+    for (size_t i = 0; i < pinyin_list_.size(); ++i) {
+        const int distance = edit_distance(std::string(token), pinyin_list_[i]);
+        if (best_idx < 0 || distance < best_dist ||
+            (distance == best_dist && pinyin_list_[i] < pinyin_list_[best_idx])) {
+            best_dist = distance;
+            best_idx = static_cast<int32_t>(i);
+        }
+    }
+    return best_idx;
+}
+
+std::string Tokenizer::pinyin_token(int32_t id) const {
+    if (id < 0 || static_cast<size_t>(id) >= pinyin_list_.size()) return {};
+    return pinyin_list_[static_cast<size_t>(id)];
 }
 
 std::string Tokenizer::ids_to_text(const std::vector<int32_t>& ids) const {
