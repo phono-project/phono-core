@@ -65,15 +65,19 @@ The code is organized into four subdirectories — src/core, src/algo, src/conte
 - bins/post_model.pte — 后段拼音编码器，输出 hidden states 与定宽候选 ID 表
 - bins/pinyin_segment.pte — BHWC 间隙 Scorer（模型包启用智能分词时必需）
 - vocabs/chinese_vocab.txt — 汉字词表（预测输出空间）
-- vocabs/context_vocab.txt — 上下文词表（含特殊符号，如 bos_token）
+- vocabs/context_vocab.txt — 上下文基础词表；`config.json` 中声明的 `bos_token` 等特殊符号由运行时追加
 - vocabs/pinyin_vocab.txt — 拼音音节词表（模型输入）
 - vocabs/pinyin_char_vocab.txt — Scorer 字符词表（启用智能分词时必需）
 
-本地准备的 v2.2 base 模型包为 `phonop2c_v2_2_base_w4a8_model` 与
-`phonop2c_v2_2_base_w8a8_model`。w4a8/w8a8 描述 P2C 主模型；当前分词
-Scorer 使用可动态长度执行的非量化 PTE。模型格式锁定为字符串 `"2.2"`，
-不兼容旧包。运行期配置不放入模型包，使用仓库的
-`core_configs/engine_config.json` 与 `core_configs/context_manager.json`。
+已发布的 v2.2 base 模型包为 `phonop2c_v2_2_base_w4a8_model` 与 `phonop2c_v2_2_base_w8a8_model`。w4a8/w8a8 描述 P2C 主模型；当前分词 Scorer 使用可动态长度执行的非量化 PTE。模型格式锁定为字符串 `"2.2"`，不兼容旧包。运行期配置不放入模型包，使用仓库的 `core_configs/engine_config.json` 与 `core_configs/context_manager.json`。
+
+使用 Hugging Face CLI 下载其中一个模型包：
+
+```bash
+hf download afirelily/phonop2c_v2_2_base_w4a8_model --local-dir ./phonop2c_v2_2_base_w4a8_model
+# 或
+hf download afirelily/phonop2c_v2_2_base_w8a8_model --local-dir ./phonop2c_v2_2_base_w8a8_model
+```
 
 Trie 在加载时直接由 `pinyin_vocab.txt` 构造，不在模型包中保存另一份词典结构。
 
@@ -86,19 +90,21 @@ A model package is a self-contained directory; InferenceEngine is constructed wi
 - bins/post_model.pte — the pinyin encoder, returning hidden states and a bounded candidate-ID table
 - bins/pinyin_segment.pte — the BHWC gap scorer (required when smart segmentation is enabled)
 - vocabs/chinese_vocab.txt — the Chinese-character vocabulary (prediction output space)
-- vocabs/context_vocab.txt — the context vocabulary (including special tokens such as bos_token)
+- vocabs/context_vocab.txt — the base context vocabulary; special tokens such as `bos_token` are declared in `config.json` and appended at runtime
 - vocabs/pinyin_vocab.txt — the pinyin-syllable vocabulary (model input)
 - vocabs/pinyin_char_vocab.txt — scorer character vocabulary (required when smart segmentation is enabled)
 
-The prepared local v2.2 packages are `phonop2c_v2_2_base_w4a8_model` and
-`phonop2c_v2_2_base_w8a8_model`. w4a8/w8a8 describes the main P2C model; the
-current segmentation scorer is an unquantized PTE that supports dynamic input
-lengths. The package format is locked to string `"2.2"` and intentionally does
-not accept old packages. Runtime policy lives outside the package in
-`core_configs/engine_config.json` and `core_configs/context_manager.json`.
+The published v2.2 base packages are `phonop2c_v2_2_base_w4a8_model` and `phonop2c_v2_2_base_w8a8_model`. w4a8/w8a8 describes the main P2C model; the current segmentation scorer is an unquantized PTE that supports dynamic input lengths. The package format is locked to string `"2.2"` and intentionally does not accept old packages. Runtime policy lives outside the package in `core_configs/engine_config.json` and `core_configs/context_manager.json`.
 
-The Trie is built directly from `pinyin_vocab.txt` at load time, so no second
-serialized dictionary structure is stored in the package.
+Download either package with the Hugging Face CLI:
+
+```bash
+hf download afirelily/phonop2c_v2_2_base_w4a8_model --local-dir ./phonop2c_v2_2_base_w4a8_model
+# or
+hf download afirelily/phonop2c_v2_2_base_w8a8_model --local-dir ./phonop2c_v2_2_base_w8a8_model
+```
+
+The Trie is built directly from `pinyin_vocab.txt` at load time, so no second serialized dictionary structure is stored in the package.
 
 ## 构建与运行
 
@@ -112,7 +118,7 @@ serialized dictionary structure is stored in the package.
 
 ### 选择性编译（算子裁剪）
 
-PhonoP2C 的 export.py 在导出 pre_model.pte / post_model.pte 之后会生成 ExecuTorch 选择编译清单（selected_operators.yaml 格式）：每个模型一份，以及一份合并清单，记录模型实际使用的算子与精度（dtype/dim-order）。把这些清单文件复制到 ops_config/ 目录后重新 `pixi run config && pixi run build`，编译会自动裁剪 ExecuTorch 内核库：
+PhonoP2C 的 Hydra 导出任务（`python main.py task=export`，实现在 `export/task.py`）会在导出 pre_model.pte / post_model.pte 后生成 ExecuTorch 选择编译清单（selected_operators.yaml 格式）：每个模型一份，以及一份合并清单，记录模型实际使用的算子与精度（dtype/dim-order）。把这些清单文件复制到 ops_config/ 目录后重新 `pixi run config && pixi run build`，编译会自动裁剪 ExecuTorch 内核库：
 
 - 算子裁剪：通过 EXECUTORCH_SELECT_OPS_LIST 只注册清单中出现的算子，避免链接完整 portable_ops_lib；
 - 精度裁剪：由合并清单生成 selected_op_variants.h 并配合 EXECUTORCH_SELECTIVE_BUILD_DTYPE 只保留清单中出现的 dtype 变体（ExecuTorch 官方仅支持单个 .pte 模型走 dtype 裁剪，这里改为基于多模型合并清单）。
@@ -133,7 +139,7 @@ At configure time, CMake cache variables can be overridden: PHONO_USE_INSTALLED_
 
 ### Selective build (operator pruning)
 
-PhonoP2C's export.py emits ExecuTorch selective-build manifests (selected_operators.yaml format) after exporting pre_model.pte / post_model.pte: one per model plus a merged one, recording exactly which operators and dtypes (dtype/dim-order kernel variants) the models use. Copy the manifests into ops_config/ and re-run `pixi run config && pixi run build` to prune the ExecuTorch kernel library:
+PhonoP2C's Hydra export task (`python main.py task=export`, implemented in `export/task.py`) emits ExecuTorch selective-build manifests after exporting pre_model.pte / post_model.pte: one per model plus a merged one in selected_operators.yaml format, recording exactly which operators and dtypes (dtype/dim-order kernel variants) the models use. Copy the manifests into ops_config/ and re-run `pixi run config && pixi run build` to prune the ExecuTorch kernel library:
 
 - Operator pruning: EXECUTORCH_SELECT_OPS_LIST registers only the operators present in the manifests, so the full portable_ops_lib is never linked.
 - Dtype (precision) pruning: a selected_op_variants.h header is generated from the merged manifest and combined with EXECUTORCH_SELECTIVE_BUILD_DTYPE to keep only the dtype variants actually used. (Upstream ExecuTorch only supports dtype-selective-build from a single .pte model; here it is driven by the multi-model merged manifest instead.)
@@ -174,16 +180,13 @@ Run the C-ABI demo after downloading the model:
 results/cli_demo_capi phonop2c_v2_2_base_w4a8_model
 ```
 
-For repeatable performance measurements without interactive I/O, run the CSV
-benchmark with a model package, iteration count and warmup count:
+For repeatable performance measurements without interactive I/O, run the CSV benchmark with a model package, iteration count and warmup count:
 
 ```
 results/performance_benchmark phonop2c_v2_2_base_w4a8_model 20 5
 ```
 
-It reports model-load RSS and latency, individual pre/post method latency,
-generation across several history/window lengths, and one-token incremental
-fill latency. Setup and cache initialization are outside each timed sample.
+It reports model-load RSS and latency, individual pre/post method latency, generation across several history/window lengths, and one-token incremental fill latency. Setup and cache initialization are outside each timed sample.
 
 The CLI reads one continuous pinyin window per line, such as `nihaoma`. It calls the stable automatic segmentation endpoint with versioned JSON, displays the `scorer_viterbi`/`checked_fmm` route, invalid ranges, and normalization events, then passes the returned `pinyin_ids` directly to generation. Optional arguments two and three select `engine_config.json` and `context_manager.json`; the defaults come from the repository's `core_configs/` directory.
 

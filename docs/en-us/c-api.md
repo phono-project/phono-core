@@ -1,23 +1,16 @@
 # C ABI call convention
 
-`libphono_core` exports the exception-safe C ABI declared in
-`interface/phono_api.h`. Handles are opaque and every failure is a
-`phono_status`; `phono_last_error_message()` supplies a thread-local diagnostic.
+`libphono_core` exports the exception-safe C ABI declared in `interface/phono_api.h`. Handles are opaque and every failure is a `phono_status`; `phono_last_error_message()` supplies a thread-local diagnostic.
 
 ## Typical flow
 
 1. Load versioned `engine_config.json` with `phono_engine_create`.
-2. Inspect segmenter availability and load diagnostics with
-   `phono_engine_info_json`.
-3. Send raw pinyin through `phono_engine_segment_pinyin`; its response already
-   contains legal `pinyin_ids`.
-4. Create a context manager and session using versioned
-   `context_manager.json`, then call `phono_session_generate`.
+2. Inspect segmenter availability and load diagnostics with `phono_engine_info_json`.
+3. Send raw pinyin through `phono_engine_segment_pinyin`; its response already contains legal `pinyin_ids`.
+4. Create a context manager and session using versioned `context_manager.json`, then call `phono_session_generate`.
 5. Commit a candidate with `phono_session_fill` and repeat.
 
-The segmentation endpoint automatically uses scorer-Viterbi when the package
-contains a usable segmenter and checked FMM otherwise. Its complete request and
-response schema is specified in [Smart Pinyin Segmentation](pinyin-segmentation.md).
+The segmentation endpoint automatically uses scorer-Viterbi when the package contains a usable segmenter and checked FMM otherwise. Its complete request and response schema is specified in [Smart Pinyin Segmentation](pinyin-segmentation.md).
 
 ```c
 phono_engine* engine = NULL;
@@ -53,22 +46,14 @@ phono_free(result_json);
 
 ## Configuration and sessions
 
-Engine/tokenizer policy and context/session policy are different JSON inputs;
-see [Runtime configuration](core-config.md). A session binds no context slot.
-Every operation receives an explicit `phono_context`, so one session can drive
-multiple slots. Passing no `context_ids` to generation reuses committed slot
-history. A nonzero cancellation callback aborts between steps and restores
-`current_seqlen` to `history_seqlen`.
+Engine/tokenizer policy and context/session policy are different JSON inputs; see [Runtime configuration](core-config.md). A session binds no context slot. Every operation receives an explicit `phono_context`, so one session can drive multiple slots. Passing no `context_ids` to generation reuses committed slot history. A nonzero cancellation callback aborts between steps and restores `current_seqlen` to `history_seqlen`.
 
 ## Ownership
 
-- Strings returned by `phono_engine_info_json`,
-  `phono_engine_segment_pinyin`, and `phono_tokenizer_decode` use `phono_free`.
+- Strings returned by `phono_engine_info_json`, `phono_engine_segment_pinyin`, and `phono_tokenizer_decode` use `phono_free`.
 - Arrays returned by `phono_tokenizer_encode_context` use `phono_free`.
 - `phono_generate_result` internals use `phono_generate_result_free`.
 - Engine, manager, and session handles use their matching destroy functions.
 - Context handles are borrowed from the manager and must not be freed.
 
-The complete declarations remain the authoritative function list in
-`interface/phono_api.h`. `cli_demo_capi` and `ime_demo_capi` are end-to-end C
-ABI examples; both display the selected segmentation route and invalid ranges.
+The complete declarations remain the authoritative function list in `interface/phono_api.h`. `cli_demo_capi` and `ime_demo_capi` are end-to-end C ABI examples; both display the selected segmentation route and invalid ranges.

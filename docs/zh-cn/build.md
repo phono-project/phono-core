@@ -32,9 +32,7 @@ CMake 在未显式指定 CMAKE_TOOLCHAIN_FILE 时会自动读取环境变量 VCP
 
 ## 选择性编译（算子/精度裁剪）
 
-PhonoP2C 的 export.py 在导出后会把 ExecuTorch 选择编译清单（每模型一份 + 合并一份）写入
-PhonoP2C/export_output/manifests/。要把 ExecuTorch 内核库裁剪到模型实际用到的算子与精度，
-把清单文件复制到 phono-core 的 ops_config/ 目录后重新配置即可：
+PhonoP2C 的 Hydra 导出任务（`python main.py task=export`，实现在 `export/task.py`）会在导出后把 ExecuTorch 选择编译清单（每模型一份 + 合并一份）写入 PhonoP2C/export_output/manifests/。要把 ExecuTorch 内核库裁剪到模型实际用到的算子与精度，把清单文件复制到 phono-core 的 ops_config/ 目录后重新配置即可：
 
 ```
 cp <PhonoP2C>/export_output/manifests/<tag>_ops.yaml ops_config/

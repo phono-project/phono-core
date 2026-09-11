@@ -1,9 +1,6 @@
 # Runtime configuration reference
 
-Runtime policy is deliberately separate from the model package and split into
-two versioned JSON documents. Every document requires the string
-`"schema_version": "1.0"`; missing and unknown versions return
-`PHONO_CONFIG_ERROR`.
+Runtime policy is deliberately separate from the model package and split into two versioned JSON documents. Every document requires the string `"schema_version": "1.0"`; missing and unknown versions return `PHONO_CONFIG_ERROR`.
 
 ## Engine and tokenizer policy
 
@@ -34,15 +31,11 @@ two versioned JSON documents. Every document requires the string
 | `repair` | In safe mode, repair each invalid character to its nearest legal token instead of deleting it |
 | `max_pinyin_chars` | Maximum normalized character count accepted by the segmentation endpoint |
 
-`max_pinyin_chars` limits raw segmentation work. It is distinct from
-`max_pinyin_length`, which limits the number of syllable IDs passed to the P2C
-model. See [Smart Pinyin Segmentation](pinyin-segmentation.md) for routing,
-normalization, and response schemas.
+`max_pinyin_chars` limits raw segmentation work. It is distinct from `max_pinyin_length`, which limits the number of syllable IDs passed to the P2C model. See [Smart Pinyin Segmentation](pinyin-segmentation.md) for routing, normalization, and response schemas.
 
 ## Context and session policy
 
-`core_configs/context_manager.json` is passed independently to
-`phono_context_manager_create` and `phono_session_create`:
+`core_configs/context_manager.json` is passed independently to `phono_context_manager_create` and `phono_session_create`:
 
 ```json
 {
@@ -71,11 +64,6 @@ normalization, and response schemas.
 | `decay_alpha` | Non-negative | 0.5 |
 | `decay_lambda` | Non-negative | 1/60 |
 
-Fields other than `schema_version` may be omitted and use model-derived
-defaults. Unknown legacy names such as `N` and `T` have no effect.
+Fields other than `schema_version` may be omitted and use model-derived defaults. Unknown legacy names such as `N` and `T` have no effect.
 
-The history is a BOS-preserving left-shift window. When it reaches
-`max_history_length`, old tokens are discarded down to
-`max_history_length - slack_interval`. Violating a model limit returns
-`CoreConfigError` in C++ or `PHONO_CONFIG_ERROR` in C, with detail in
-`phono_last_error_message`.
+The history is a BOS-preserving left-shift window. When it reaches `max_history_length`, old tokens are discarded down to `max_history_length - slack_interval`. Violating a model limit returns `CoreConfigError` in C++ or `PHONO_CONFIG_ERROR` in C, with detail in `phono_last_error_message`.

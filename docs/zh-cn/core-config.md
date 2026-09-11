@@ -1,7 +1,6 @@
 # 运行期配置参考
 
-运行策略与模型包分离，并拆成两份版本化 JSON。每份文档都必须包含字符串
-`"schema_version": "1.0"`；缺失或版本未知时返回 `PHONO_CONFIG_ERROR`。
+运行策略与模型包分离，并拆成两份版本化 JSON。每份文档都必须包含字符串 `"schema_version": "1.0"`；缺失或版本未知时返回 `PHONO_CONFIG_ERROR`。
 
 ## 引擎与 tokenizer 策略
 
@@ -32,14 +31,11 @@
 | `repair` | 安全模式下逐字符映射到最近合法 token，而不是删除非法字符 |
 | `max_pinyin_chars` | 分词接口允许的最大归一化字符数 |
 
-`max_pinyin_chars` 限制分词工作量；`max_pinyin_length` 则限制送入 P2C
-模型的音节 ID 数量，两者含义不同。路由、归一化和响应 Schema 见
-[智能拼音分词](pinyin-segmentation.md)。
+`max_pinyin_chars` 限制分词工作量；`max_pinyin_length` 则限制送入 P2C 模型的音节 ID 数量，两者含义不同。路由、归一化和响应 Schema 见 [智能拼音分词](pinyin-segmentation.md)。
 
 ## 上下文与会话策略
 
-`core_configs/context_manager.json` 分别传给
-`phono_context_manager_create` 和 `phono_session_create`：
+`core_configs/context_manager.json` 分别传给 `phono_context_manager_create` 和 `phono_session_create`：
 
 ```json
 {
@@ -68,10 +64,6 @@
 | `decay_alpha` | 非负 | 0.5 |
 | `decay_lambda` | 非负 | 1/60 |
 
-除 `schema_version` 外的字段可以省略并使用模型推导值。`N`、`T` 等旧键名
-不再生效。
+除 `schema_version` 外的字段可以省略并使用模型推导值。`N`、`T` 等旧键名不再生效。
 
-历史窗口采用保留 BOS 的左移机制：到达 `max_history_length` 时丢弃最旧
-token，缩到 `max_history_length - slack_interval`。超出模型限制时，C++
-返回 `CoreConfigError`，C ABI 返回 `PHONO_CONFIG_ERROR`，详细原因可通过
-`phono_last_error_message` 获取。
+历史窗口采用保留 BOS 的左移机制：到达 `max_history_length` 时丢弃最旧 token，缩到 `max_history_length - slack_interval`。超出模型限制时，C++ 返回 `CoreConfigError`，C ABI 返回 `PHONO_CONFIG_ERROR`，详细原因可通过 `phono_last_error_message` 获取。

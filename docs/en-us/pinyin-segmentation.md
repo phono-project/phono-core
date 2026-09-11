@@ -2,71 +2,44 @@
 
 ## Scorer and MAP decoding
 
-The segmentation model scores character gaps; the pinyin-vocabulary Trie
-enforces legality. A normalized input of length `n` always has `n-1` gaps. If
-the model emits logit `z_k` and boundary state `y_k`, then
+The segmentation model scores character gaps; the pinyin-vocabulary Trie enforces legality. A normalized input of length `n` always has `n-1` gaps. If the model emits logit `z_k` and boundary state `y_k`, then
 
 ```text
 log P(Y|X) = sum_k [y_k log sigmoid(z_k) + (1-y_k) log(1-sigmoid(z_k))]
            = C(X) + sum_k y_k z_k.
 ```
 
-`C(X)` is path-independent. For MAP argmax only, the decoder therefore sums
-raw logits at selected boundaries. No sigmoid, geometric mean, or syllable
-count penalty is needed, even when full pinyin and jianpin produce different
-numbers of syllables. This simplification preserves argmax; it is not a
-calibrated whole-path probability.
+`C(X)` is path-independent. For MAP argmax only, the decoder therefore sums raw logits at selected boundaries. No sigmoid, geometric mean, or syllable count penalty is needed, even when full pinyin and jianpin produce different numbers of syllables. This simplification preserves argmax; it is not a calibrated whole-path probability.
 
-All full-pinyin and jianpin matches from each offset form a forward Trie DAG.
-An edge `(i,j)` receives `z_(j-1)` when `j<n`, or zero at the input end. The
-dynamic program is `O(E)`. Exact-score ties prefer fewer syllables, then longer
-earlier syllables.
+All full-pinyin and jianpin matches from each offset form a forward Trie DAG. An edge `(i,j)` receives `z_(j-1)` when `j<n`, or zero at the input end. The dynamic program is `O(E)`. Exact-score ties prefer fewer syllables, then longer earlier syllables.
 
 ## Automatic routing
 
-`InferenceEngine::segment_pinyin` and C ABI `phono_engine_segment_pinyin` are
-the stable high-level entry points:
+`InferenceEngine::segment_pinyin` and C ABI `phono_engine_segment_pinyin` are the stable high-level entry points:
 
-- a package segmenter and an input at least `min_input_chars` long use the
-  scorer plus Trie DAG;
+- a package segmenter and an input at least `min_input_chars` long use the scorer plus Trie DAG;
 - lengths one and two bypass the model and use checked FMM;
-- a package without `segmenter` remains usable, routes every input to checked
-  FMM, and reports a warning through `phono_engine_info_json.diagnostics`;
-- a declared but broken segmenter fails engine loading instead of silently
-  falling back.
+- a package without `segmenter` remains usable, routes every input to checked FMM, and reports a warning through `phono_engine_info_json.diagnostics`;
+- a declared but broken segmenter fails engine loading instead of silently falling back.
 
-Checked FMM includes global reachability: it first minimizes invalid
-characters, then applies maximum-matching tie breaks. A locally longest token
-cannot create an avoidable dead end.
+Checked FMM includes global reachability: it first minimizes invalid characters, then applies maximum-matching tie breaks. A locally longest token cannot create an avoidable dead end.
 
 ## Normalization and invalid input
 
-Normalization is configured by `engine_config.json`: ASCII lowercasing;
-separator removal with a forced boundary; and `v -> u` after `j/q/x/y` when no
-forced boundary intervenes. Thus `jvan` becomes `juan`, while `lv` and `nv`
-stay unchanged. Every change is recorded in `normalization_events`.
+Normalization is configured by `engine_config.json`: ASCII lowercasing; separator removal with a forced boundary; and `v -> u` after `j/q/x/y` when no forced boundary intervenes. Thus `jvan` becomes `juan`, while `lv` and `nv` stay unchanged. Every change is recorded in `normalization_events`.
 
-Strict mode accepts only legal Trie edges. An unreachable input returns
-`InferenceError::InvalidPinyin` / `PHONO_INVALID_PINYIN` without running the
-scorer.
+Strict mode accepts only legal Trie edges. An unreachable input returns `InferenceError::InvalidPinyin` / `PHONO_INVALID_PINYIN` without running the scorer.
 
-Safe mode retains per-character invalid edges in the DP but minimizes invalid
-characters before considering model score, so they are selected only when no
-fully legal route exists:
+Safe mode retains per-character invalid edges in the DP but minimizes invalid characters before considering model score, so they are selected only when no fully legal route exists:
 
 - `repair=false` (default) deletes selected invalid characters;
-- `repair=true` repairs each invalid character independently via
-  `find_pinyin_id_nearest`; edit distance is not exposed.
+- `repair=true` repairs each invalid character independently via `find_pinyin_id_nearest`; edit distance is not exposed.
 
-`invalid_ranges` uses half-open UTF-8 byte offsets `[begin,end)` in the original
-pre-normalization string. On safe success, `normalized_input` and every entry
-in `segments` are exactly encodable by the pinyin tokenizer. A result that is
-empty after deletion still returns `PHONO_INVALID_PINYIN`.
+`invalid_ranges` uses half-open UTF-8 byte offsets `[begin,end)` in the original pre-normalization string. On safe success, `normalized_input` and every entry in `segments` are exactly encodable by the pinyin tokenizer. A result that is empty after deletion still returns `PHONO_INVALID_PINYIN`.
 
 ## Versioned JSON schema 1.0
 
-Every C ABI JSON document requires top-level string `schema_version: "1.0"`.
-Missing or unknown versions return `PHONO_CONFIG_ERROR`.
+Every C ABI JSON document requires top-level string `schema_version: "1.0"`. Missing or unknown versions return `PHONO_CONFIG_ERROR`.
 
 Segmentation request:
 
@@ -120,8 +93,7 @@ Segmentation response (also allocated on `PHONO_INVALID_PINYIN` when possible):
 }
 ```
 
-The optional package `config.json` section is below. `layout` is fixed to
-`BHWC`, and `min_input_chars` is at least three:
+The optional package `config.json` section is below. `layout` is fixed to `BHWC`, and `min_input_chars` is at least three:
 
 ```json
 "segmenter": {
