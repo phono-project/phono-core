@@ -1,16 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
 
-# Keep an explicitly supplied triplet intact for cross-compilation.
-if(CMAKE_HOST_WIN32 AND NOT DEFINED VCPKG_TARGET_TRIPLET)
-  set(VCPKG_TARGET_TRIPLET "x64-windows-static" CACHE STRING
-      "vcpkg triplet used to build phono-core dependencies")
-endif()
-
-if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND DEFINED ENV{VCPKG_ROOT})
-  set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
-      CACHE FILEPATH "vcpkg toolchain file")
-endif()
-
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION.txt" PHONO_VERSION LIMIT_COUNT 1)
 project(phono_core VERSION "${PHONO_VERSION}" LANGUAGES CXX)
 
@@ -28,6 +17,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
+endif()
+
+if (MSVC)
+  add_compile_options(/utf-8)
 endif()
 
 # Set MSVC runtime library to MT to avoid DLL dependencies on Windows.
@@ -155,54 +148,7 @@ else()
     add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
   endif()
 
-  # ═══════════════════════════════════════════════════════════════════════
-  # Pre-build host 'flatc' tool during CMake configure time if not found.
-  # This avoids target name collisions and version mismatches (especially on Windows).
-  # ═══════════════════════════════════════════════════════════════════════
   find_program(FLATC_EXECUTABLE flatc)
-
-  if(NOT FLATC_EXECUTABLE)
-    set(FLATBUFFERS_SRC_DIR "${EXECUTORCH_SOURCE_DIR}/third-party/flatbuffers")
-    set(FLATBUFFERS_BUILD_DIR "${CMAKE_BINARY_DIR}/host_flatc_build")
-
-    if(WIN32)
-      set(FLATC_BIN_PATH "${FLATBUFFERS_BUILD_DIR}/Release/flatc.exe")
-      if(NOT EXISTS "${FLATC_BIN_PATH}")
-        set(FLATC_BIN_PATH "${FLATBUFFERS_BUILD_DIR}/flatc.exe")
-      endif()
-    else()
-      set(FLATC_BIN_PATH "${FLATBUFFERS_BUILD_DIR}/flatc")
-    endif()
-
-    if(NOT EXISTS "${FLATC_BIN_PATH}")
-      message(STATUS "Pre-building host flatc compiler from ExecuTorch third-party/flatbuffers...")
-      
-      execute_process(
-        COMMAND ${CMAKE_COMMAND} -S "${FLATBUFFERS_SRC_DIR}" -B "${FLATBUFFERS_BUILD_DIR}"
-                -DFLATBUFFERS_BUILD_FLATC=ON
-                -DFLATBUFFERS_BUILD_TESTS=OFF
-                -DCMAKE_BUILD_TYPE=Release
-        RESULT_VARIABLE CMAKE_FLATC_CONFIG_RES
-      )
-      
-      execute_process(
-        COMMAND ${CMAKE_COMMAND} --build "${FLATBUFFERS_BUILD_DIR}" --config Release --target flatc
-        RESULT_VARIABLE CMAKE_FLATC_BUILD_RES
-      )
-
-      if(NOT CMAKE_FLATC_BUILD_RES EQUAL 0)
-        message(FATAL_ERROR "Failed to pre-build host flatc executable!")
-      endif()
-
-      # A fresh Visual Studio build creates the Release directory only now.
-      if(WIN32 AND EXISTS "${FLATBUFFERS_BUILD_DIR}/Release/flatc.exe")
-        set(FLATC_BIN_PATH "${FLATBUFFERS_BUILD_DIR}/Release/flatc.exe")
-      endif()
-    endif()
-
-    set(FLATC_EXECUTABLE "${FLATC_BIN_PATH}" CACHE FILEPATH "Path to flatc compiler" FORCE)
-  endif()
-
   message(STATUS "Using FLATC_EXECUTABLE: ${FLATC_EXECUTABLE}")
 
   set(EXECUTORCH_BUILD_EXTENSION_MODULE ON CACHE BOOL "" FORCE)
@@ -252,7 +198,11 @@ else()
   endif()
 endif()
 
-find_package(uni-algo CONFIG REQUIRED)
+include(FetchContent)
+FetchContent_Declare(uni-algo
+  URL https://github.com/uni-algo/uni-algo/archive/v1.2.0.tar.gz
+  FIND_PACKAGE_ARGS CONFIG) # fallback to build
+FetchContent_MakeAvailable(uni-algo)
 set(PHONO_UNI_ALGO_LIBRARIES uni-algo::uni-algo)
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -441,6 +391,31 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/phono-coreConfig.cmake"
 install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/phono-core COMPONENT sdk)
 install(FILES VERSION.txt DESTINATION ${CMAKE_INSTALL_DATADIR}/phono-core RENAME VERSION COMPONENT sdk)
 
+function(install_third_party_licenses)
+    set(options "")
+    set(oneValueArgs SOURCE_DIR)
+    set(multiValueArgs "")
+    cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    file(GLOB _license_files
+        LIST_DIRECTORIES false
+        CONFIGURE_DEPENDS
+        "${ARG_SOURCE_DIR}/third[_-]party/*/LICENSE*"
+        "${ARG_SOURCE_DIR}/third[_-]party/*/COPYING*"
+    )
+
+    foreach(_file IN LISTS _license_files)
+        cmake_path(GET _file PARENT_PATH _dir)
+        get_filename_component(_lib "${_dir}" NAME)
+        install(FILES "${_file}"
+                DESTINATION "share/licenses/${_lib}"
+        )
+    endforeach()
+endfunction()
+install_third_party_licenses(SOURCE_DIR ${CMAKE_SOURCE_DIR})
+install_third_party_licenses(SOURCE_DIR ${EXECUTORCH_SOURCE_DIR})
+install_third_party_licenses(SOURCE_DIR ${EXECUTORCH_SOURCE_DIR}/backends/xnnpack)
+
 # ═══════════════════════════════════════════════════════════════════════
 # Demo: links libphono_core.so and talks to it exclusively through the stable
 # C interface.
@@ -499,4 +474,12 @@ if(BUILD_TESTING)
   add_test(NAME phono_ime_editor_tests COMMAND phono_ime_editor_tests)
   set_tests_properties(phono_core_tests phono_capi_tests phono_ime_editor_tests
     PROPERTIES LABELS unit)
+  set_tests_properties(
+    phono_capi_tests
+    phono_engine_tests
+    phono_ime_editor_tests
+    PROPERTIES
+        ENVIRONMENT "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:phono_core_shared>:$ENV{LD_LIBRARY_PATH}"
+        "DYLD_LIBRARY_PATH=$<TARGET_FILE_DIR:phono_core_shared>:$ENV{DYLD_LIBRARY_PATH}"
+  )
 endif()

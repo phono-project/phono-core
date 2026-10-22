@@ -1,0 +1,130 @@
+{
+  "version": 5,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "installDir": "${sourceDir}/dist/${presetName}",
+      "cacheVariables": {
+        "BUILD_TESTING": "ON",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_POSITION_INDEPENDENT_CODE": "ON",
+        "CMAKE_INSTALL_LIBDIR": "lib",
+        "CMAKE_INSTALL_REMOVE_ENVIRONMENT_RPATH": "ON",
+        "CMAKE_SKIP_RPATH": "ON",
+        "CMAKE_PREFIX_PATH": "$env{CONDA_PREFIX}"
+      }
+    },
+    {
+      "name": "base-ninja",
+      "hidden": true,
+      "inherits": "base",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-native",
+      "inherits": "base-ninja",
+      "condition": {
+        "lhs": "${hostSystemName}",
+        "type": "equals",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_SYSROOT": "$env{CONDA_BUILD_SYSROOT}"
+      }
+    },
+    {
+      "name": "macos-native",
+      "inherits": "base-ninja",
+      "condition": {
+        "lhs": "${hostSystemName}",
+        "type": "equals",
+        "rhs": "Darwin"
+      }
+    },
+    {
+      "name": "android-armv8",
+      "inherits": "base-ninja",
+      "toolchainFile": "$env{ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake",
+      "cacheVariables": {
+        "ANDROID_PLATFORM": "android-26",
+        "ANDROID_STL": "c++_shared",
+        "ANDROID_ABI": "arm64-v8a"
+      }
+    },
+    {
+      "name": "windows-native",
+      "inherits": "base-ninja",
+      "condition": {
+        "lhs": "${hostSystemName}",
+        "type": "equals",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "windows-native-msbuild",
+      "inherits": "base",
+      "condition": {
+        "lhs": "${hostSystemName}",
+        "type": "equals",
+        "rhs": "Windows"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "linux-native",
+      "configurePreset": "linux-native"
+    },
+    {
+      "name": "macos-native",
+      "configurePreset": "macos-native"
+    },
+    {
+      "name": "windows-native",
+      "configurePreset": "windows-native"
+    },
+    {
+      "name": "windows-native-msbuild",
+      "configurePreset": "windows-native-msbuild",
+      "configuration": "Release"
+    },
+    {
+      "name": "android-armv8",
+      "configurePreset": "android-armv8"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "base-test",
+      "hidden": true,
+      "execution": {
+        "noTestsAction": "error",
+        "stopOnFailure": false
+      },
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-native",
+      "configurePreset": "linux-native"
+    },
+    {
+      "name": "macos-native",
+      "configurePreset": "macos-native"
+    },
+    {
+      "name": "windows-native",
+      "configurePreset": "windows-native"
+    }
+  ]
+}

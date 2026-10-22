@@ -3,11 +3,6 @@ name: Build and release the core SDK
 on:
   pull_request:
   workflow_dispatch:
-    inputs:
-      model_tests:
-        description: Verify both pinned models as in a release
-        type: boolean
-        default: false
   release:
     types: [published]
 
@@ -24,78 +19,74 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04
-            platform: linux-x86_64
-            manifest: ci/pixi.toml
-          - os: windows-2022
-            platform: windows-x64
-            manifest: pixi.toml
+        - os: ubuntu-24.04
+          target: linux-64
+        - os: ubuntu-24.04-arm
+          target: linux-aarch64
+        - os: macos-14
+          target: macos-arm64
+        - os: windows-2022
+          target: win-64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.release.tag_name || github.ref }}
-          fetch-depth: 0
           persist-credentials: false
-      - uses: prefix-dev/setup-pixi@a09b6247153796b190642a2b53fac4241043cf6f # v0.10.0
+      - uses: prefix-dev/setup-pixi@v0.11.2
         with:
           pixi-version: v0.81.0
-          manifest-path: ${{ matrix.manifest }}
+          # activate-environment: true
+          # not compatible with windows
+          # prefix-dev/setup-pixi#122
           locked: true
           cache: true
-      - name: Validate version and release ancestry
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          PIXI_MANIFEST: ${{ matrix.manifest }}
-        run: |
-          if test -n "$RELEASE_TAG"; then
-            pixi run --locked --manifest-path "$PIXI_MANIFEST" python tools/release_version.py --tag "$RELEASE_TAG"
-            git merge-base --is-ancestor HEAD "origin/$DEFAULT_BRANCH"
-          else
-            pixi run --locked --manifest-path "$PIXI_MANIFEST" python tools/release_version.py
-          fi
-      - name: Build and test Linux SDK with the locked glibc 2.28 toolchain
-        if: runner.os == 'Linux'
-        run: pixi run --locked --manifest-path ci/pixi.toml python tools/ci_build_core.py --source . --prefix build/sdk --build-dir build/linux-sdk --jobs 4
-      - name: Build and test Windows x64 SDK
-        if: runner.os == 'Windows'
-        shell: cmd
-        run: |
-          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
-          pixi run --locked python tools/build_sdk.py --prefix build/sdk --build-dir build/windows-sdk --jobs 4
-      - name: Verify both required model formats
-        if: github.event_name == 'release' || inputs.model_tests == true
-        shell: bash
-        env:
-          PLATFORM: ${{ matrix.platform }}
-          PIXI_MANIFEST: ${{ matrix.manifest }}
-        run: |
-          pixi run --locked --manifest-path "$PIXI_MANIFEST" python tools/fetch_models.py --precision w4a8 --path-file build/w4a8-path.txt
-          pixi run --locked --manifest-path "$PIXI_MANIFEST" python tools/fetch_models.py --precision w8a8 --path-file build/w8a8-path.txt
-          if test "$PLATFORM" = linux-x86_64; then
-            native=build/linux-sdk/native
-            runtime=build/linux-sdk/runtime
-          else
-            native=build/windows-sdk
-            runtime=build/windows-sdk/bin
-          fi
-          pixi run --locked --manifest-path "$PIXI_MANIFEST" python tools/test_models.py --build-dir "$native" --runtime-dir "$runtime" --model-dir "$(cat build/w4a8-path.txt)" --model-dir "$(cat build/w8a8-path.txt)"
-      - name: Package tested SDK
-        shell: bash
-        env:
-          PLATFORM: ${{ matrix.platform }}
-          PIXI_MANIFEST: ${{ matrix.manifest }}
-        run: |
-          pixi run --locked --manifest-path "$PIXI_MANIFEST" python tools/package_sdk.py --prefix build/sdk --platform "$PLATFORM"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/cache@v6
+        id: third_party_cache
         with:
-          name: phono-core-${{ matrix.platform }}
-          path: |
-            dist/phono-core-sdk-*-${{ matrix.platform }}.tar.gz
-            dist/phono-core-sdk-*-${{ matrix.platform }}.zip
+          path: third_party
+          key: ${{ runner.os }}-third_party-${{ hashFiles('justfile') }}
+      - name: prepare third_party
+        if: steps.third_party_cache.outputs.cache-hit != 'true'
+        run: pixi run setup
+      - name: configure
+        run: pixi run config
+      - name: build
+        run: pixi run build
+      - name: install
+        run: pixi run install
+      - uses: actions/cache@v6
+        id: models_cache
+        with:
+          path: cache/models
+          key: ${{ runner.os }}-models-${{ hashFiles('justfile') }}
+      - name: prepare models
+        if: steps.models_cache.outputs.cache-hit != 'true'
+        run: pixi run prepare-models
+      - name: test models
+        run: |
+          pixi run test
+      - uses: nttld/setup-ndk@v1
+        if: matrix.target == 'linux-64'
+        with:
+          ndk-version: r30
+          local-cache: true
+      - name: build android
+        if: matrix.target == 'linux-64'
+        env:
+          PRESET: android-armv8
+        run: |
+          pixi run cmake --preset $PRESET
+          pixi run cmake --build --preset $PRESET
+          pixi run cmake --build --preset $PRESET --target install
+      - name: package
+        run: |
+          pixi run python tools/package_sdk.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: phono-core-${{ runner.os }}
+          path: artifacts
           if-no-files-found: error
 
   upload:
@@ -104,8 +95,15 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - name: ensure release tag
+        run: |
+          python tools/release_version.py --tag "$RELEASE_TAG"
+          git merge-base --is-ancestor HEAD "origin/$DEFAULT_BRANCH"
+      - uses: actions/download-artifact@7
         with:
           pattern: phono-core-*
           merge-multiple: true
@@ -114,5 +112,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: gh release upload "$RELEASE_TAG" dist/phono-core-sdk-*-linux-x86_64.tar.gz dist/phono-core-sdk-*-windows-x64.zip --clobber

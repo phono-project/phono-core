@@ -3,8 +3,10 @@ name = "phono-core-env"
 description = "phono core compile environment"
 channels = ["conda-forge"]
 platforms = [
-    { name = "linux-glibc228", platform = "linux-64", glibc = "2.28" },
-    { name = "win-64", platform = "win-64" }
+  "linux-64",
+  "linux-aarch64",
+  "win-64",
+  "osx-arm64",
 ]
 
 [dependencies]
@@ -12,32 +14,45 @@ python = "=3.13.15"
 ninja = "*"
 cmake = "*"
 pip = "*"
+just = "*"
+
+huggingface_hub = "*"
 
 c-compiler = "*"
 cxx-compiler = "*"
 
-[pypi-dependencies]
-torch = "==2.14.0"
-pyyaml = "==6.0.3"
+pytorch = "<2.14" # torch 2.14 requires macos 14+
+pyyaml = "=6.0.3"
+flatbuffers = "=24.3.25" # third_party\executorch\third-party\flatbuffers\include\flatbuffers\base.h
 
-[target.linux-64.pypi-dependencies]
-torch = { url = "https://download.pytorch.org/whl/cpu/torch-2.14.0%2Bcpu-cp313-cp313-manylinux_2_28_x86_64.whl" }
+[target.linux-64.activation.env]
+CMAKE_BUILD_DIR = "linux-native"
+[target.linux-aarch64.activation.env]
+CMAKE_BUILD_DIR = "linux-native"
+[target.osx-arm64.activation.env]
+CMAKE_BUILD_DIR = "macos-native"
+[target.win-64.activation.env]
+CMAKE_BUILD_DIR = "windows-native"
+[target.win-64.tasks]
+config = "unset CMAKE_GENERATOR_PLATFORM && unset CMAKE_GENERATOR_TOOLSET && cmake --preset $CMAKE_BUILD_DIR" # for ninja
 
 [tasks]
-# Fetch the ExecuTorch source and initialize *only* the submodules phono-core
-# actually needs for its CMake configuration:
-#   - third-party/{flatbuffers,flatcc,json,gflags}: added unconditionally by
-#     executorch's third-party/CMakeLists.txt
-#   - backends/xnnpack/third-party/{FP16,FXdiv,XNNPACK,cpuinfo,pthreadpool}:
-#     required by the XNNPACK backend (EXECUTORCH_BUILD_XNNPACK=ON) and the
-#     default cpuinfo/pthreadpool build
-# googletest is intentionally excluded: phono-core builds BUILD_TESTING=OFF for
-# the ExecuTorch sub-build (it has its own hand-rolled CTest suite).
-setup = "python setup_executorch.py"
+setup = """
+  mkdir -p third_party/executorch
+  just prepare-executorch
+"""
+prepare-models = "just prepare-models"
 format = "black . && isort ."
 lint = "flake8 . && mypy ."
-config = "cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Release -DPHONO_DTYPE_SELECTIVE_BUILD=OFF"
-build = "cmake --build build"
+config = "cmake --preset $CMAKE_BUILD_DIR"
+build = "cmake --build --preset $CMAKE_BUILD_DIR"
+install = "cmake --build --preset $CMAKE_BUILD_DIR --target install"
+test = """
+  export PHONO_TEST_MODEL_DIR=$(readlink -m cache/models/w4a8/)
+  ctest --preset $CMAKE_BUILD_DIR
+  export PHONO_TEST_MODEL_DIR=$(readlink -m cache/models/w8a8/)
+  ctest --preset $CMAKE_BUILD_DIR
+"""
 
 [environments]
 default = { features = [], solve-group = "default" }
