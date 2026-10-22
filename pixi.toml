@@ -32,7 +32,9 @@ CMAKE_BUILD_DIR = "linux-native"
 [target.osx-arm64.activation.env]
 CMAKE_BUILD_DIR = "macos-native"
 [target.win-64.activation.env]
-CMAKE_BUILD_DIR = "windows-native-msbuild"
+CMAKE_BUILD_DIR = "windows-native"
+[target.win-64.tasks]
+config = "unset CMAKE_GENERATOR_PLATFORM && unset CMAKE_GENERATOR_TOOLSET && cmake --preset $CMAKE_BUILD_DIR" # for ninja
 
 [tasks]
 setup = """
@@ -45,7 +47,12 @@ lint = "flake8 . && mypy ."
 config = "cmake --preset $CMAKE_BUILD_DIR"
 build = "cmake --build --preset $CMAKE_BUILD_DIR"
 install = "cmake --build --preset $CMAKE_BUILD_DIR --target install"
-test = "ctest --preset $CMAKE_BUILD_DIR"
+test = """
+  export PHONO_TEST_MODEL_DIR=$(readlink -m cache/models/w4a8/)
+  ctest --preset $CMAKE_BUILD_DIR
+  export PHONO_TEST_MODEL_DIR=$(readlink -m cache/models/w8a8/)
+  ctest --preset $CMAKE_BUILD_DIR
+"""
 
 [environments]
 default = { features = [], solve-group = "default" }

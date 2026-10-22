@@ -66,9 +66,6 @@ jobs:
         run: pixi run prepare-models
       - name: test models
         run: |
-          export PHONO_TEST_MODEL_DIR=$(readlink -m cache/models/w4a8/)
-          pixi run test
-          export PHONO_TEST_MODEL_DIR=$(readlink -m cache/models/w8a8/)
           pixi run test
       - uses: nttld/setup-ndk@v1
         if: matrix.target == 'linux-64'

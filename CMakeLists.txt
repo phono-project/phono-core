@@ -480,5 +480,6 @@ if(BUILD_TESTING)
     phono_ime_editor_tests
     PROPERTIES
         ENVIRONMENT "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:phono_core_shared>:$ENV{LD_LIBRARY_PATH}"
+        "DYLD_LIBRARY_PATH=$<TARGET_FILE_DIR:phono_core_shared>:$ENV{DYLD_LIBRARY_PATH}"
   )
 endif()
