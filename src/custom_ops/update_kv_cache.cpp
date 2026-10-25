@@ -68,7 +68,10 @@ std::tuple<Tensor&, Tensor&> read_mhsa_kv_out(
                     torch::executor::tensor_is_default_dim_order(out1) &&
                     cache.scalar_type() == out0.scalar_type() &&
                     cache.scalar_type() == out1.scalar_type(), InvalidArgument, result);
-    Tensor::SizesType sizes[] = {cache.size(2), static_cast<Tensor::SizesType>(positions.numel()), cache.size(4), cache.size(5)};
+    Tensor::SizesType sizes[] = {static_cast<Tensor::SizesType>(cache.size(2)),
+                                 static_cast<Tensor::SizesType>(positions.numel()),
+                                 static_cast<Tensor::SizesType>(cache.size(4)),
+                                 static_cast<Tensor::SizesType>(cache.size(5))};
     ET_KERNEL_CHECK(ctx, executorch::runtime::resize_tensor(out0, {sizes, 4}) == executorch::runtime::Error::Ok &&
                     executorch::runtime::resize_tensor(out1, {sizes, 4}) == executorch::runtime::Error::Ok,
                     InvalidArgument, result);

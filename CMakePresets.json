@@ -1,0 +1,126 @@
+{
+  "version": 5,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "installDir": "${sourceDir}/dist/${presetName}",
+      "cacheVariables": {
+        "BUILD_TESTING": "ON",
+        "CMAKE_POSITION_INDEPENDENT_CODE": "ON",
+        "CMAKE_INSTALL_LIBDIR": "lib",
+        "CMAKE_INSTALL_REMOVE_ENVIRONMENT_RPATH": "ON",
+        "CMAKE_SKIP_RPATH": "ON",
+        "CMAKE_PREFIX_PATH": "$env{CONDA_PREFIX}"
+      }
+    },
+    {
+      "name": "base-ninja",
+      "hidden": true,
+      "inherits": "base",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-x86_64",
+      "inherits": "base-ninja"
+    },
+    {
+      "name": "linux-arm64",
+      "inherits": "base-ninja"
+    },
+    {
+      "name": "macos-arm64",
+      "inherits": "base-ninja"
+    },
+    {
+      "name": "windows-x64-msbuild",
+      "inherits": "base"
+    },
+    {
+      "name": "windows-x64",
+      "inherits": "windows-x64-msbuild",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "android-armv8",
+      "inherits": "base-ninja",
+      "toolchainFile": "$env{ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake",
+      "cacheVariables": {
+        "ANDROID_PLATFORM": "android-26",
+        "ANDROID_STL": "c++_shared",
+        "ANDROID_ABI": "arm64-v8a"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "linux-x86_64",
+      "configurePreset": "linux-x86_64"
+    },
+    {
+      "name": "linux-arm64",
+      "configurePreset": "linux-arm64"
+    },
+    {
+      "name": "macos-arm64",
+      "configurePreset": "macos-arm64"
+    },
+    {
+      "name": "windows-x64",
+      "configurePreset": "windows-x64"
+    },
+    {
+      "name": "windows-x64-msbuild",
+      "configurePreset": "windows-x64-msbuild",
+      "configuration": "Release"
+    },
+    {
+      "name": "android-armv8",
+      "configurePreset": "android-armv8"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "base-test",
+      "hidden": true,
+      "execution": {
+        "noTestsAction": "error",
+        "stopOnFailure": false
+      },
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-x86_64",
+      "inherits": "base-test",
+      "configurePreset": "linux-x86_64"
+    },
+    {
+      "name": "linux-arm64",
+      "inherits": "base-test",
+      "configurePreset": "linux-arm64"
+    },
+    {
+      "name": "macos-arm64",
+      "inherits": "base-test",
+      "configurePreset": "macos-arm64"
+    },
+    {
+      "name": "windows-x64",
+      "inherits": "base-test",
+      "configurePreset": "windows-x64"
+    }
+  ]
+}
