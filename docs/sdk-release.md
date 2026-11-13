@@ -23,7 +23,7 @@ SDK 包含 `include/phono-core/phono_api.h`、Linux 的 `lib/libphono_core.so` �
 The SDK contains `include/phono-core/phono_api.h`, Linux `lib/libphono_core.so` or Windows `bin/phono_core.dll` and `lib/phono_core.lib`, `lib/cmake/phono-core`, `share/licenses/phono-core`, `share/phono-core/VERSION`, and `build-info.json`. A C-only project can link the installed C API without installing ExecuTorch, Python, or core sources.
 
 ```cmake
-find_package(phono-core 0.1.2 CONFIG REQUIRED)
+find_package(phono-core 0.1.3 CONFIG REQUIRED)
 target_link_libraries(frontend PRIVATE phono::core)
 ```
 
