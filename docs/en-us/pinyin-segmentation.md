@@ -26,7 +26,7 @@ Checked FMM includes global reachability: it first minimizes invalid characters,
 
 ## Normalization and invalid input
 
-Normalization is configured by `engine_config.json`: ASCII lowercasing; separator removal with a forced boundary; and `v -> u` after `j/q/x/y` when no forced boundary intervenes. Thus `jvan` becomes `juan`, while `lv` and `nv` stay unchanged. Every change is recorded in `normalization_events`.
+Normalization is configured by `engine_config.json`: ASCII lowercasing and separator removal with a forced boundary. With `normalize_v_to_u` enabled, each separator-delimited run maps `v -> u` after `j/q/x/y` and `nue/lue -> nve/lve`. Thus `jvan` becomes `juan` and `nuedai` becomes `nvedai`, while `lv`, `nv`, and `nu'e` retain their distinctions. Unseparated input prefers üe: `luer` becomes `lver`; use `lu'er` to retain two syllables. Every change is recorded in `normalization_events`, with `u_to_v` identifying each replacement of `u` with `v`.
 
 Strict mode accepts only legal Trie edges. An unreachable input returns `InferenceError::InvalidPinyin` / `PHONO_INVALID_PINYIN` without running the scorer.
 

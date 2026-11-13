@@ -26,7 +26,7 @@ checked FMM 使用全局可达性检查：先最小化非法字符数，再按�
 
 ## 归一化和非法输入
 
-归一化按 `engine_config.json` 执行：ASCII 大写转小写；配置的分隔符被删除并强制产生边界；`j/q/x/y` 后且未跨越强制边界的 `v` 映射为 `u`。因此 `jvan` 变为 `juan`，而 `lv`、`nv` 保留原状。每一步修改都出现在 `normalization_events` 中。
+归一化按 `engine_config.json` 执行：ASCII 大写转小写；配置的分隔符被删除并强制产生边界；启用 `normalize_v_to_u` 时，同一分隔片段内 `j/q/x/y` 后的 `v` 映射为 `u`，`nue/lue` 映射为 `nve/lve`。因此 `jvan` 变为 `juan`，`nuedai` 变为 `nvedai`，而 `lv`、`nv`、`nu'e` 保留原有区别。连写时优先按 üe 理解，例如 `luer` 变为 `lver`；若要保留 `lu` 和 `er` 两个音节，应输入 `lu'er`。每一步修改都出现在 `normalization_events` 中，`u` 转为 `v` 的事件类型为 `u_to_v`。
 
 严格模式只允许合法 Trie 边。不存在完整合法路径时返回 `InferenceError::InvalidPinyin` / `PHONO_INVALID_PINYIN`，且不会执行 Scorer。
 

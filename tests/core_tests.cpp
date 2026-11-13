@@ -101,7 +101,37 @@ void test_pinyin_normalization() {
     const auto separated = phono::core::normalize_pinyin("j'v", config);
     check(separated.canonical_input == "jv", "v/u mapping must not cross a forced boundary");
 
+    const auto ue = phono::core::normalize_pinyin("NUEDAI'lueshi", config);
+    check(ue.canonical_input == "nvedailveshi", "nue/lue should normalize before segmentation");
+    check(ue.forced_boundaries[5] && ue.source_offsets[7] == 8,
+          "u/v replacement must preserve boundaries and source offsets");
+    size_t u_to_v_count = 0;
+    for (const auto& event : ue.events) {
+        if (event.type != "u_to_v") continue;
+        check((event.begin == 1 || event.begin == 8) && event.end == event.begin + 1 &&
+                  event.before == "u" && event.after == "v",
+              "u_to_v events must identify the replaced u byte");
+        ++u_to_v_count;
+    }
+    check(u_to_v_count == 2, "each nue/lue replacement should produce an event");
+    for (const std::string input : {"nu'e", "n'ue", "lu'e", "l'ue"}) {
+        const auto boundary = phono::core::normalize_pinyin(input, config);
+        check(boundary.canonical_input == (input.front() == 'n' ? "nue" : "lue"),
+              "nue/lue replacement must not cross either forced boundary");
+    }
+    check(phono::core::normalize_pinyin("nu'nv'lu'lv'nuan'luan'nun'lun'nuo'luo'nve'lve", config)
+                  .canonical_input == "nunvlulvnuanluannunlunnuoluonvelve",
+          "other nu/lu/nv/lv spellings must remain unchanged");
+    check(phono::core::normalize_pinyin("nue'an'luer", config).canonical_input == "nveanlver",
+          "nue/lue replacement should apply within longer separator-delimited runs");
+    config.normalize_v_to_u = false;
+    check(phono::core::normalize_pinyin("nue'lue'jve", config).canonical_input == "nueluejve",
+          "disabled u/v normalization must preserve both directions");
+    config.normalize_v_to_u = true;
+
     config.separators = "'，";
+    check(phono::core::normalize_pinyin("nu，e，l，ue", config).canonical_input == "nuelue",
+          "nue/lue replacement must respect multi-byte configured separators");
     const auto unicode_separator = phono::core::normalize_pinyin("ni，hao你", config);
     check(unicode_separator.canonical_input == "nihao你",
           "multi-byte separators must be matched as complete Unicode codepoints");

@@ -26,7 +26,7 @@ Runtime policy is deliberately separate from the model package and split into tw
 | Key | Meaning |
 | --- | --- |
 | `lowercase_ascii` | Convert ASCII uppercase letters before matching |
-| `normalize_v_to_u` | Convert `v` to `u` only after `j/q/x/y` in the same separator-delimited run |
+| `normalize_v_to_u` | Within each separator-delimited run, convert `v` to `u` after `j/q/x/y` and convert `nue/lue` to `nve/lve` |
 | `separators` | Characters removed while forcing a syllable boundary |
 | `use_segmenter` | Load the neural gap scorer (default `true`). Set `false` when the frontend already provides syllables, such as shuangpin |
 | `segment_mode` | `safe` returns valid output plus invalid ranges; `strict` rejects any invalid route |

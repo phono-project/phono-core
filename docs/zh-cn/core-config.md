@@ -26,7 +26,7 @@
 | 字段 | 含义 |
 | --- | --- |
 | `lowercase_ascii` | 匹配前把 ASCII 大写字母转为小写 |
-| `normalize_v_to_u` | 只在同一分隔片段的 `j/q/x/y` 后把 `v` 转为 `u` |
+| `normalize_v_to_u` | 在同一分隔片段内，将 `j/q/x/y` 后的 `v` 转为 `u`，将 `nue/lue` 转为 `nve/lve` |
 | `separators` | 删除这些字符，并在原位置强制产生音节边界 |
 | `use_segmenter` | 加载神经分词模型，缺省为 `true`；双拼等前端已经提供音节时设为 `false` |
 | `segment_mode` | `safe` 返回合法输出和非法范围；`strict` 拒绝任何非法路径 |

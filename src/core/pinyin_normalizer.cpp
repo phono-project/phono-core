@@ -38,6 +38,15 @@ NormalizedPinyin normalize_pinyin(const std::string& input,
         }
 
         const bool separated = force_before_next;
+        const size_t size = result.canonical_input.size();
+        if (config.normalize_v_to_u && normalized == "e" && !separated && size >= 2 &&
+            !result.forced_boundaries.back() && result.canonical_input.back() == 'u' &&
+            (result.canonical_input[size - 2] == 'n' || result.canonical_input[size - 2] == 'l')) {
+            result.canonical_input.back() = 'v';
+            const size_t source = result.source_offsets.back();
+            result.events.push_back(PinyinNormalizationEvent{
+                "u_to_v", source, source + 1, "u", "v"});
+        }
         if (config.normalize_v_to_u && normalized == "v" && !separated &&
             !result.canonical_input.empty()) {
             const char previous = result.canonical_input.back();
