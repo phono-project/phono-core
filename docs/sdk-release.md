@@ -6,9 +6,17 @@ phono-core owns its version, with the root `VERSION.txt` as the single source. R
 
 ## 使用 SDK / Consume the SDK
 
-从 [GitHub Releases](https://github.com/phono-project/phono-core/releases) 下载对应版本的平台 SDK，解压到任意 SDK 前缀。Linux x86_64 使用 `.tar.gz`，Windows x64 使用 `.zip`；资产名为 `phono-core-sdk-X.Y.Z-linux-x86_64.tar.gz` 或 `phono-core-sdk-X.Y.Z-windows-x64.zip`。模型不随 SDK 打包。
+从 [GitHub Releases](https://github.com/phono-project/phono-core/releases) 下载对应版本的平台 SDK，解压到任意 SDK 前缀。正式发布覆盖以下五个平台，模型不随 SDK 打包。
 
-Download the platform SDK for the desired version from [GitHub Releases](https://github.com/phono-project/phono-core/releases) and extract into an SDK prefix. Linux x86_64 uses `.tar.gz` and Windows x64 uses `.zip`; assets are named `phono-core-sdk-X.Y.Z-linux-x86_64.tar.gz` or `phono-core-sdk-X.Y.Z-windows-x64.zip`. Models are distributed separately.
+Download the platform SDK for the desired version from [GitHub Releases](https://github.com/phono-project/phono-core/releases) and extract into an SDK prefix. Releases cover the following five platforms. Models are distributed separately.
+
+| 平台 / Platform | Release 资产 / Release asset |
+| --- | --- |
+| Linux x86_64 | `phono-core-sdk-X.Y.Z-linux-x86_64.tar.gz` |
+| Linux ARM64 | `phono-core-sdk-X.Y.Z-linux-arm64.tar.gz` |
+| Windows x64 | `phono-core-sdk-X.Y.Z-windows-x64.zip` |
+| macOS ARM64 | `phono-core-sdk-X.Y.Z-macos-arm64.tar.gz` |
+| Android ARM64 | `phono-core-sdk-X.Y.Z-android-armv8.tar.gz` |
 
 SDK 包含 `include/phono-core/phono_api.h`、Linux 的 `lib/libphono_core.so` 或 Windows 的 `bin/phono_core.dll` 和 `lib/phono_core.lib`、`lib/cmake/phono-core`、`share/licenses/phono-core`、`share/phono-core/VERSION` 及 `build-info.json`。安装后的 C API 可以由纯 C 工程链接，不要求消费者安装 ExecuTorch、Python 或 core 源码。
 
@@ -37,9 +45,9 @@ The current model format is `2.2`. Release verification covers two snapshots: [W
 
 One universal runtime supports both quantized models; no precision-specific runtimes are published. `ci/core-dependencies.json` pins the ExecuTorch commit and gitlinks, while the committed `pixi.lock` and `ci/pixi.lock` pin Python and build environments. The runtime contains XNNPACK, the operator union from `ops_config`, and `phono::update_mhsa_kv.out`, with dtype pruning disabled. Models requiring additional operators need an updated core manifest and a rebuilt, verified runtime.
 
-Linux 构建使用 glibc 2.28 sysroot 和 GCC 13.3；发布前读取最终 ELF 实际导入的 GLIBC、GLIBCXX、CXXABI 版本，分别限制为 2.28、3.4.31、1.3.14，并检查导出仅含 `phono_*`、没有 RPATH 及额外运行库依赖。系统须提供满足实际报告的 glibc、libstdc++ 和 libgcc；报告保存在 `build-info.json`。Windows x64 使用静态 MSVC CRT。macOS arm64 尚未纳入正式交付，须完成独立构建和模型验证后增加平台产物。
+Windows x64 使用静态 MSVC CRT。macOS ARM64 构建环境要求 macOS 14 或更高版本；Android ARM64 使用 NDK 交叉编译，目标为 API 26、`arm64-v8a` 和 `c++_shared`。Linux x86_64 与 ARM64 分别使用对应的 Pixi 构建环境。
 
-Linux builds use the glibc 2.28 sysroot and GCC 13.3. Release checks read the final ELF's actual imported GLIBC, GLIBCXX, and CXXABI versions and cap them at 2.28, 3.4.31, and 1.3.14, while checking that exports are limited to `phono_*`, no RPATH is present, and no extra runtime dependencies appear. The host must supply glibc, libstdc++, and libgcc meeting the recorded requirements in `build-info.json`. Windows x64 uses the static MSVC CRT. macOS arm64 is not a release platform yet; independent build and model verification is required before adding its artifacts.
+Windows x64 uses the static MSVC CRT. The macOS ARM64 build environment requires macOS 14 or later. Android ARM64 is cross-compiled with the NDK for API 26, `arm64-v8a`, and `c++_shared`. Linux x86_64 and ARM64 use their respective Pixi build environments.
 
 ## 模型包布局 / Model package layout
 
@@ -76,15 +84,15 @@ pixi run --locked python tools/build_sdk.py --prefix build/sdk --build-dir build
 pixi run --locked --manifest-path ci/pixi.toml python tools/ci_build_core.py --source . --prefix build/sdk --build-dir build/linux-sdk
 ```
 
-PR 构建两个平台并运行 `unit` CTest 和安装后纯 C 消费者检查。Release 另下载并逐个运行 W4A8、W8A8 `model` 测试；缺失目录、配置或模型文件会失败，`PHONO_REQUIRE_TEST_MODEL=1` 使测试不能按成功跳过。手动入口的 `model_tests` 可复现完整模型验证。
+PR、手动运行和 Release 工作流均在 Linux x86_64、Linux ARM64、Windows x64、macOS ARM64 上构建，并分别使用 W4A8、W8A8 模型目录运行 CTest。Linux x86_64 任务另外交叉编译并安装 Android ARM64 SDK；Android 产物不在此工作流中运行目标设备测试。
 
-PR builds cover both platforms, the `unit` CTests, and an installed C-only consumer. Releases additionally download and run the W4A8 and W8A8 `model` tests separately. Missing directories, configuration, or model files fail verification, and `PHONO_REQUIRE_TEST_MODEL=1` prevents successful skips. The manual workflow's `model_tests` input reproduces the complete model verification.
+PR, manual, and release workflows build Linux x86_64, Linux ARM64, Windows x64, and macOS ARM64, running CTest separately with the W4A8 and W8A8 model directories. The Linux x86_64 job also cross-compiles and installs the Android ARM64 SDK; this workflow does not run Android device tests.
 
 ## 维护流程 / Maintainer workflow
 
-完成代码、依赖及版本更新并合并到默认分支后，创建 `vX.Y.Z` 标签，再在 GitHub 发布对应 Release（正式版或预发布均可）。工作流检出该标签，校验版本与默认分支归属，完成构建、测试、SDK 打包，然后只上传两个平台的 SDK 压缩包。只推送标签不会触发交付；只有上传任务拥有写权限。
+完成代码、依赖及版本更新并合并到默认分支后，创建 `vX.Y.Z` 标签，再在 GitHub 发布对应 Release（正式版或预发布均可）。工作流完成构建、测试和 SDK 打包后，发布任务检出该标签及完整 Git 历史，校验版本与默认分支归属，将 CI 产物下载到 `dist/`，再显式上传上述五个平台的 SDK 压缩包。只推送标签不会触发交付；只有上传任务拥有写权限。
 
-After merging code, dependency, and version updates into the default branch, create a `vX.Y.Z` tag and publish its GitHub Release, either stable or prerelease. The workflow checks out the tag, validates the version and default-branch ancestry, builds and tests, packages the SDK, and uploads only the two platform SDK archives. Pushing a tag alone does not deliver artifacts; only the upload job has write permission.
+After merging code, dependency, and version updates into the default branch, create a `vX.Y.Z` tag and publish its GitHub Release, either stable or prerelease. After building, testing, and packaging, the release job checks out the tag with full Git history, validates the version and default-branch ancestry, downloads CI artifacts into `dist/`, and explicitly uploads the SDK archives for all five platforms above. Pushing a tag alone does not deliver artifacts; only the upload job has write permission.
 
 演示程序保留为源码示例，按[构建指南](zh-cn/build.md)本地编译，不随 Release 发布。
 
