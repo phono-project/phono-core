@@ -22,6 +22,13 @@ class ReleaseLink(unittest.TestCase):
             toolchain = ndk / 'build/cmake/android.toolchain.cmake'
             toolchain.parent.mkdir(parents=True)
             toolchain.touch()
+            compiler_dir = ndk / 'toolchains/llvm/prebuilt/linux-x86_64/bin'
+            compiler_dir.mkdir(parents=True)
+            binary = compiler_dir / 'clang-real'
+            binary.write_text('#!/bin/sh\nexit 0\n')
+            binary.chmod(0o755)
+            (compiler_dir / 'clang').symlink_to('clang-real')
+            (compiler_dir / 'clang++').symlink_to('clang')
             for arch in ('nocona', 'armv8-a'):
                 host = {**os.environ, 'ANDROID_NDK_ROOT': str(ndk),
                         'ANDROID_NDK_HOME': '/wrong/preinstalled/ndk',
@@ -34,6 +41,13 @@ class ReleaseLink(unittest.TestCase):
                 self.assertEqual(target['CXX'], host['CXX'])
                 self.assertFalse(any(target[key] for key in ('CFLAGS', 'CXXFLAGS', 'CPPFLAGS', 'LDFLAGS')))
                 self.assertEqual(host['LDFLAGS'], '-L/host/lib -Wl,-rpath,/host/lib')
+            # setup-ndk's optional fs.cp local cache can replace relative links
+            # with absolute paths into a previous runner's tool cache. A valid
+            # toolchain file alone must not make that restored NDK acceptable.
+            (compiler_dir / 'clang++').unlink()
+            (compiler_dir / 'clang++').symlink_to(root / 'old-tool-cache/bin/clang')
+            with self.assertRaisesRegex(ValueError, 'compiler is missing or not executable'):
+                release_environment(host, root / 'build', 'android-armv8')
 
     def test_injected_rpaths_are_rejected_and_removed(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temporary:

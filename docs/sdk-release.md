@@ -90,9 +90,9 @@ pixi run --locked python tools/package_sdk.py
 
 With a model available, set `PHONO_TEST_MODEL_DIR` to its absolute package path and run the same `pixi run --locked test`. Before Linux packaging, the installed shared library must export only the C ABI, contain no RPATH / RUNPATH, and require GLIBC ≤ 2.28, GLIBCXX ≤ 3.4.32 and CXXABI ≤ 1.3.14. A failed check stops packaging; the report and compiler version are recorded in the SDK's `share/phono-core/build-info.json`.
 
-Android 配置只使用 NDK 的目标编译与链接参数，不继承 Linux Conda 的头文件、库搜索路径或 RPATH；CI 将 `setup-ndk` 的安装输出显式传给 `ANDROID_NDK_ROOT`。Linux 的 GLIBCXX 上限按 GCC 13.2 起的符号版本确定，仍严格检查实际 ELF 需求。
+Android 配置只使用 NDK 的目标编译与链接参数，不继承 Linux Conda 的头文件、库搜索路径或 RPATH；CI 将 `setup-ndk` 的安装输出显式传给 `ANDROID_NDK_ROOT`，关闭会将相对软链接改为旧 runner 绝对路径的可选 `local-cache`。配置前检查 `clang` / `clang++` 是否实际存在且可执行。Linux 的 GLIBCXX 上限按 GCC 13.2 起的符号版本确定，仍严格检查实际 ELF 需求。
 
-Android configuration uses the NDK's target compile/link flags without inheriting Linux Conda headers, library searches or RPATHs. CI explicitly passes `setup-ndk`'s installed path as `ANDROID_NDK_ROOT`. The Linux GLIBCXX limit follows the symbol versions introduced in GCC 13.2; actual ELF requirements remain checked.
+Android configuration uses the NDK's target compile/link flags without inheriting Linux Conda headers, library searches or RPATHs. CI explicitly passes `setup-ndk`'s installed path as `ANDROID_NDK_ROOT` and disables the optional `local-cache`, whose copy can rewrite relative symlinks to absolute paths on a previous runner. Configuration checks that `clang` / `clang++` exist and are executable. The Linux GLIBCXX limit follows the symbol versions introduced in GCC 13.2; actual ELF requirements remain checked.
 
 PR、手动运行和 Release 工作流均在 Linux x86_64、Linux ARM64、Windows x64、macOS ARM64 上构建，并分别使用 W4A8、W8A8 模型目录运行 CTest。Linux x86_64 任务另外交叉编译并安装 Android ARM64 SDK；Android 产物不在此工作流中运行目标设备测试。
 

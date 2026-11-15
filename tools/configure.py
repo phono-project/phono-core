@@ -19,6 +19,16 @@ def release_environment(environment: dict[str, str], build: Path, preset: str) -
                    environment.get('ANDROID_NDK_HOME', '')).resolve()
         if not (ndk / 'build/cmake/android.toolchain.cmake').is_file():
             raise ValueError('Set ANDROID_NDK_ROOT to the installed Android NDK')
+        compiler_dirs = list(ndk.glob('toolchains/llvm/prebuilt/*/bin'))
+        if len(compiler_dirs) != 1:
+            raise ValueError(f'Android NDK LLVM prebuilt directory is missing or ambiguous: {ndk}')
+        for name in ('clang', 'clang++'):
+            compiler = compiler_dirs[0] / (name + ('.exe' if os.name == 'nt' else ''))
+            if not compiler.is_file() or not os.access(compiler, os.X_OK):
+                raise ValueError(
+                    f'Android NDK compiler is missing or not executable: {compiler}. '
+                    'Reinstall the NDK with setup-ndk local-cache disabled; '
+                    'restored local caches can contain broken compiler symlinks.')
         environment['ANDROID_NDK_ROOT'] = str(ndk)
         environment['ANDROID_NDK_HOME'] = str(ndk)
         # The NDK owns target flags and library searches. In particular, a host

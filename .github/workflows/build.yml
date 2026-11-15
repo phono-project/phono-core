@@ -79,7 +79,9 @@ jobs:
         if: matrix.target == 'linux-64'
         with:
           ndk-version: r30
-          local-cache: true
+          # The optional local copy rewrites NDK symlinks to old tool-cache paths.
+          # Use the action's normal tool cache, which preserves relative links.
+          local-cache: false
       - name: build android
         if: matrix.target == 'linux-64'
         env:
