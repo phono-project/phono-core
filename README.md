@@ -65,16 +65,16 @@ Runtime settings are split between `engine_config.json` for segmentation and gen
 
 ## 源码构建与测试 / Build and test from source
 
-源码构建需要 Pixi、vcpkg 和平台对应的 C++ 工具链。环境准备与构建选项见 [中文构建指南](docs/zh-cn/build.md) / [English build guide](docs/en-us/build.md)。在准备好的开发终端中，从仓库根目录运行：
+源码构建需要 Pixi 和平台对应的 C++ 工具链。环境准备与构建选项见 [中文构建指南](docs/zh-cn/build.md) / [English build guide](docs/en-us/build.md)。在准备好的开发终端中，从仓库根目录运行：
 
-Source builds require Pixi, vcpkg, and a C++ toolchain for your platform. See the [build guide](docs/en-us/build.md) for environment setup and build options. From a prepared developer shell in the repository root, run:
+Source builds require Pixi and a C++ toolchain for your platform. See the [build guide](docs/en-us/build.md) for environment setup and build options. From a prepared developer shell in the repository root, run:
 
 ```sh
 pixi install --locked
 pixi run setup
 pixi run config
 pixi run build
-pixi run ctest --test-dir build --output-on-failure
+pixi run test
 ```
 
 模型级测试需将 `PHONO_TEST_MODEL_DIR` 指向完整的 v2.2 模型包；未设置时这些测试会跳过。编译后的演示程序位于 `build/bin/`，从仓库根目录运行 `build/bin/cli_demo_capi <model-dir>`（Windows 使用 `.exe`），默认读取 `core_configs/`。性能测试命令见构建指南。

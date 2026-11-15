@@ -16,6 +16,7 @@
         "CMAKE_INSTALL_LIBDIR": "lib",
         "CMAKE_INSTALL_REMOVE_ENVIRONMENT_RPATH": "ON",
         "CMAKE_SKIP_RPATH": "ON",
+        "PHONO_DTYPE_SELECTIVE_BUILD": "OFF",
         "CMAKE_PREFIX_PATH": "$env{CONDA_PREFIX}"
       }
     },

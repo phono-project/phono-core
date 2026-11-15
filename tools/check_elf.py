@@ -12,6 +12,7 @@ import subprocess
 CORE_RUNTIME = {
     "libc.so.6", "libm.so.6", "libstdc++.so.6", "libgcc_s.so.1",
     "libpthread.so.0", "libdl.so.2", "librt.so.1", "ld-linux-x86-64.so.2",
+    "ld-linux-aarch64.so.1",
 }
 
 

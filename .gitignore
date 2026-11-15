@@ -9,3 +9,5 @@ src/gen
 cache
 dist
 __pycache__
+
+artifacts/

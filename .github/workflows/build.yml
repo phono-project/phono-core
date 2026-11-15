@@ -51,11 +51,11 @@ jobs:
         if: steps.third_party_cache.outputs.cache-hit != 'true'
         run: pixi run setup
       - name: configure
-        run: pixi run config
+        run: pixi run --locked config
       - name: build
-        run: pixi run build
+        run: pixi run --locked build
       - name: install
-        run: pixi run install
+        run: pixi run --locked install
       - uses: actions/cache@v6
         id: models_cache
         with:
@@ -65,12 +65,14 @@ jobs:
         if: steps.models_cache.outputs.cache-hit != 'true'
         run: pixi run prepare-models
       - name: test models
+        env:
+          PHONO_REQUIRE_TEST_MODEL: "1"
         shell: bash
         run: |
           export PHONO_TEST_MODEL_DIR=cache/models/w4a8/
-          pixi run test
+          pixi run --locked test
           export PHONO_TEST_MODEL_DIR=cache/models/w8a8/
-          pixi run test       
+          pixi run --locked test
       - uses: nttld/setup-ndk@v1
         # only works with linux 64, win 64, mac arm
         if: matrix.target == 'linux-64'
@@ -82,12 +84,12 @@ jobs:
         env:
           PRESET: android-armv8
         run: |
-          pixi run cmake --preset $PRESET
+          pixi run --locked python tools/configure.py --preset "$PRESET"
           pixi run cmake --build --preset $PRESET
           pixi run cmake --build --preset $PRESET --target install
       - name: package
         run: |
-          pixi run python tools/package_sdk.py
+          pixi run --locked python tools/package_sdk.py
       - uses: actions/upload-artifact@v7
         with:
           name: phono-core-${{ matrix.target }}

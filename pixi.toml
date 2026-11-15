@@ -17,28 +17,34 @@ pip = "*"
 just = "*"
 huggingface_hub = "*"
 
-c-compiler = "*"
-cxx-compiler = "*"
-
 pyyaml = "=6.0.3"
 flatbuffers = "=24.3.25" # third_party/executorch/third-party/flatbuffers/include/flatbuffers/base.h#142
 
 [pypi-dependencies]
-torch = {
-  version = "==2.14.0", 
-  index = "https://download.pytorch.org/whl/cpu",
-}
+torch = { version = "==2.14.0", index = "https://download.pytorch.org/whl/cpu" }
 
 [target.linux-64.activation.env]
 CMAKE_BUILD_DIR = "linux-x86_64"
+[target.linux-64.dependencies]
+gcc_linux-64 = "=13.3.0"
+gxx_linux-64 = "=13.3.0"
+sysroot_linux-64 = "2.28.*"
 [target.linux-aarch64.activation.env]
 CMAKE_BUILD_DIR = "linux-arm64"
+[target.linux-aarch64.dependencies]
+gcc_linux-aarch64 = "=13.3.0"
+gxx_linux-aarch64 = "=13.3.0"
+sysroot_linux-aarch64 = "2.28.*"
 [target.osx-arm64-14.activation.env]
 CMAKE_BUILD_DIR = "macos-arm64"
+[target.osx-arm64-14.dependencies]
+c-compiler = "*"
+cxx-compiler = "*"
 [target.win-64.activation.env]
 CMAKE_BUILD_DIR = "windows-x64"
-[target.win-64.tasks]
-config = "unset CMAKE_GENERATOR_PLATFORM && unset CMAKE_GENERATOR_TOOLSET && cmake --preset $CMAKE_BUILD_DIR" # for ninja
+[target.win-64.dependencies]
+c-compiler = "*"
+cxx-compiler = "*"
 
 [tasks]
 setup = """
@@ -48,7 +54,7 @@ setup = """
 prepare-models = "just prepare-models"
 format = "black . && isort ."
 lint = "flake8 . && mypy ."
-config = "cmake --preset $CMAKE_BUILD_DIR"
+config = "python tools/configure.py"
 build = "cmake --build --preset $CMAKE_BUILD_DIR"
 install = "cmake --build --preset $CMAKE_BUILD_DIR --target install"
 test = "ctest --preset $CMAKE_BUILD_DIR"

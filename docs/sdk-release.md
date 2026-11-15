@@ -18,9 +18,9 @@ Download the platform SDK for the desired version from [GitHub Releases](https:/
 | macOS ARM64 | `phono-core-sdk-X.Y.Z-macos-arm64.tar.gz` |
 | Android ARM64 | `phono-core-sdk-X.Y.Z-android-armv8.tar.gz` |
 
-SDK 包含 `include/phono-core/phono_api.h`、Linux 的 `lib/libphono_core.so` 或 Windows 的 `bin/phono_core.dll` 和 `lib/phono_core.lib`、`lib/cmake/phono-core`、`share/licenses/phono-core`、`share/phono-core/VERSION` 及 `build-info.json`。安装后的 C API 可以由纯 C 工程链接，不要求消费者安装 ExecuTorch、Python 或 core 源码。
+SDK 包含 `include/phono-core/phono_api.h`、Linux 的 `lib/libphono_core.so` 或 Windows 的 `bin/phono_core.dll` 和 `lib/phono_core.lib`、`lib/cmake/phono-core`、`share/licenses/phono-core`、`share/phono-core/VERSION` 及 Linux 的 `build-info.json`。安装后的 C API 可以由纯 C 工程链接，不要求消费者安装 ExecuTorch、Python 或 core 源码。
 
-The SDK contains `include/phono-core/phono_api.h`, Linux `lib/libphono_core.so` or Windows `bin/phono_core.dll` and `lib/phono_core.lib`, `lib/cmake/phono-core`, `share/licenses/phono-core`, `share/phono-core/VERSION`, and `build-info.json`. A C-only project can link the installed C API without installing ExecuTorch, Python, or core sources.
+The SDK contains `include/phono-core/phono_api.h`, Linux `lib/libphono_core.so` or Windows `bin/phono_core.dll` and `lib/phono_core.lib`, `lib/cmake/phono-core`, `share/licenses/phono-core`, `share/phono-core/VERSION`, and Linux `build-info.json`. A C-only project can link the installed C API without installing ExecuTorch, Python, or core sources.
 
 ```cmake
 find_package(phono-core 0.1.2 CONFIG REQUIRED)
@@ -41,9 +41,9 @@ The public interface is the C ABI in `phono_api.h`; build information records AB
 
 The current model format is `2.2`. Release verification covers two snapshots: [W4A8](https://huggingface.co/afirelily/phonop2c_v2_2_base_w4a8_model) at `c11bc50c13a5a6ff627ab60a3f5571b8fdbacc73` and [W8A8](https://huggingface.co/afirelily/phonop2c_v2_2_base_w8a8_model) at `cf11a953a62fbba10f0eb585bc65802e01b70f7d`. Configuration, pre/post `.pte` files, vocabularies, and any enabled segmenter assets must be present. The downloader writes into this repository's `cache/models`; tests receive model directories explicitly.
 
-一个通用运行库同时支持这两种量化模型，不发布按精度拆分的运行库。ExecuTorch 提交和子模块由 `ci/core-dependencies.json` 锁定，Python 与构建环境由已提交的 `pixi.lock` 和 `ci/pixi.lock` 锁定。运行库包含 XNNPACK、`ops_config` 清单的算子并集及 `phono::update_mhsa_kv.out`，关闭 dtype 裁剪。新模型若需要清单外算子，需在 core 中更新清单并重新构建验证。
+一个通用运行库同时支持这两种量化模型，不发布按精度拆分的运行库。ExecuTorch 提交和所需子模块由 `justfile` 锁定，Python 与所有平台的构建环境由已提交的 `pixi.lock` 锁定。运行库包含 XNNPACK、`ops_config` 清单的算子并集及 `phono::update_mhsa_kv.out`，关闭 dtype 裁剪。新模型若需要清单外算子，需在 core 中更新清单并重新构建验证。
 
-One universal runtime supports both quantized models; no precision-specific runtimes are published. `ci/core-dependencies.json` pins the ExecuTorch commit and gitlinks, while the committed `pixi.lock` and `ci/pixi.lock` pin Python and build environments. The runtime contains XNNPACK, the operator union from `ops_config`, and `phono::update_mhsa_kv.out`, with dtype pruning disabled. Models requiring additional operators need an updated core manifest and a rebuilt, verified runtime.
+One universal runtime supports both quantized models; no precision-specific runtimes are published. `justfile` pins the ExecuTorch commit and required submodules, while the committed `pixi.lock` pins Python and all platform build environments. The runtime contains XNNPACK, the operator union from `ops_config`, and `phono::update_mhsa_kv.out`, with dtype pruning disabled. Models requiring additional operators need an updated core manifest and a rebuilt, verified runtime.
 
 Windows x64 使用静态 MSVC CRT。macOS ARM64 构建环境要求 macOS 14 或更高版本；Android ARM64 使用 NDK 交叉编译，目标为 API 26、`arm64-v8a` 和 `c++_shared`。Linux x86_64 与 ARM64 分别使用对应的 Pixi 构建环境。
 
@@ -72,17 +72,23 @@ Special symbols such as `bos_token`, declared in `config.json`, are appended to 
 
 ## 构建与验证 / Build and verify
 
-Windows 在 x64 Visual Studio 开发者终端中设置 `VCPKG_ROOT`，然后使用已锁定环境。Linux 使用独立的已锁定 sysroot 构建环境；两个入口都是 CI 和本地复现共用的仓库脚本。
+所有平台使用同一个 Pixi 入口和对应的原生 CMake preset。Linux x86_64 / ARM64 锁定 GCC 13.3.0 与 glibc 2.28 sysroot；macOS / Windows 保留各自工具链。Linux 配置脚本检查工具链版本，清理 Conda 的 `LDFLAGS`，并以构建目录中的独立 GCC specs 去除工具链隐式 RPATH，不修改已安装的编译器。
 
-On Windows, set `VCPKG_ROOT` in an x64 Visual Studio developer shell and use the locked environment. Linux uses its separate locked sysroot toolchain. Both entry points are repository scripts shared by CI and local reproduction.
-
-```powershell
-pixi run --locked python tools/build_sdk.py --prefix build/sdk --build-dir build/windows-sdk
-```
+All platforms use the same Pixi entry points and their native CMake presets. Linux x86_64 / ARM64 pin GCC 13.3.0 and a glibc 2.28 sysroot; macOS / Windows retain their platform toolchains. Linux configuration checks the toolchain version, cleans Conda's `LDFLAGS`, and uses a separate GCC specs file in the build directory to suppress implicit toolchain RPATHs without modifying the installed compiler.
 
 ```sh
-pixi run --locked --manifest-path ci/pixi.toml python tools/ci_build_core.py --source . --prefix build/sdk --build-dir build/linux-sdk
+pixi install --locked
+pixi run --locked setup
+pixi run --locked config
+pixi run --locked build
+pixi run --locked test
+pixi run --locked install
+pixi run --locked python tools/package_sdk.py
 ```
+
+模型可用时，将 `PHONO_TEST_MODEL_DIR` 设为模型包绝对路径后运行同一个 `pixi run --locked test`。Linux 打包前检查实际安装共享库：只导出 C ABI、无 RPATH / RUNPATH，GLIBC ≤ 2.28、GLIBCXX ≤ 3.4.31、CXXABI ≤ 1.3.14。检查失败即停止打包；结果和编译器版本写入 SDK 的 `share/phono-core/build-info.json`。
+
+With a model available, set `PHONO_TEST_MODEL_DIR` to its absolute package path and run the same `pixi run --locked test`. Before Linux packaging, the installed shared library must export only the C ABI, contain no RPATH / RUNPATH, and require GLIBC ≤ 2.28, GLIBCXX ≤ 3.4.31 and CXXABI ≤ 1.3.14. A failed check stops packaging; the report and compiler version are recorded in the SDK's `share/phono-core/build-info.json`.
 
 PR、手动运行和 Release 工作流均在 Linux x86_64、Linux ARM64、Windows x64、macOS ARM64 上构建，并分别使用 W4A8、W8A8 模型目录运行 CTest。Linux x86_64 任务另外交叉编译并安装 Android ARM64 SDK；Android 产物不在此工作流中运行目标设备测试。
 

@@ -4,7 +4,7 @@
 
 ## Environment and build entry points
 
-Install Pixi, vcpkg, and a C++ toolchain. On Windows, use a Visual Studio x64 developer shell with the C++ Desktop workload and Windows SDK installed, and set `VCPKG_ROOT`. Linux release builds use a separate glibc 2.28 sysroot environment. See [SDK, compatibility and releases](../sdk-release.md) for standard SDK builds, platform requirements, and release validation.
+Install Pixi and a C++ toolchain. On Windows, use a Visual Studio x64 developer shell with the C++ Desktop workload and Windows SDK installed, and set `VCPKG_ROOT`. Linux uses the locked GCC 13.3.0 and glibc 2.28 sysroot in the same Pixi environment. See [SDK, compatibility and releases](../sdk-release.md) for standard SDK builds, platform requirements, and release validation.
 
 For routine source builds in a prepared development environment:
 
@@ -13,10 +13,10 @@ pixi install --locked
 pixi run setup
 pixi run config
 pixi run build
-pixi run ctest --test-dir build --output-on-failure
+pixi run test
 ```
 
-`setup` prepares the ExecuTorch source and required submodules according to `ci/core-dependencies.json`. `config` configures CMake, and `build` builds incrementally, with executables under `build/bin/` by default. `vcpkg.json` manages uni-algo and nlohmann-json; `codegen/zh2hans_codegen.py` generates C++ tables for traditional-to-simplified conversion during configuration.
+`setup` prepares the ExecuTorch source and required submodules according to `justfile`. `config` configures CMake, and `build` builds incrementally, with executables under `build/<preset>/bin/` by default. CMake obtains uni-algo with FetchContent and uses the ExecuTorch JSON headers; `codegen/zh2hans_codegen.py` generates C++ tables for traditional-to-simplified conversion during configuration.
 
 ## Build options
 
@@ -36,7 +36,7 @@ PhonoP2C's export task produces per-model and merged operator manifests. Place t
 Dtype pruning is independent of operator pruning. When enabled, the build generates `selected_op_variants.h` from the merged manifests and retains the corresponding dtype variants. Standard SDK builds and `pixi run config` explicitly disable dtype pruning. For a custom build, override it after running that task:
 
 ```sh
-pixi run cmake -S . -B build -DPHONO_DTYPE_SELECTIVE_BUILD=ON
+pixi run python tools/configure.py -DPHONO_DTYPE_SELECTIVE_BUILD=ON
 pixi run build
 ```
 
@@ -47,7 +47,7 @@ Set `PHONO_TEST_MODEL_DIR` to a complete v2.2 model package before running CTest
 From the repository root, pass a model directory, iteration count, and warmup count (use `.exe` on Windows):
 
 ```sh
-build/bin/performance_benchmark <model-dir> 20 5
+build/<preset>/bin/performance_benchmark <model-dir> 20 5
 ```
 
 The program reports CSV measurements for model-load latency and RSS, individual model methods, generation across history and pinyin window lengths, incremental fill, and microbenchmarks for cache clearing, beam reordering, and session reset. Input construction, context filling, and cache initialization before each sample are excluded from its timing.

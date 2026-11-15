@@ -454,6 +454,11 @@ install(FILES core_configs/engine_config.json core_configs/context_manager.json
   DESTINATION ${CMAKE_INSTALL_DATADIR}/phono-core/core_configs COMPONENT demos)
 
 if(BUILD_TESTING)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
+    add_test(NAME phono_release_tests COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/release_tests.py")
+    set_tests_properties(phono_release_tests PROPERTIES LABELS unit TIMEOUT 30)
+  endif()
   add_executable(phono_core_tests tests/core_tests.cpp)
   target_link_libraries(phono_core_tests PRIVATE phono_core)
   add_test(NAME phono_core_tests COMMAND phono_core_tests)
