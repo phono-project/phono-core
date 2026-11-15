@@ -37,6 +37,25 @@ def release_environment(environment: dict[str, str], build: Path, preset: str) -
         for variable in ('CFLAGS', 'CXXFLAGS', 'CPPFLAGS', 'LDFLAGS'):
             environment[variable] = ''
         return environment
+    if preset.startswith('macos-'):
+        # Pixi supplies build tools/Python, while Xcode owns the runtime ABI.
+        # Conda Clang's default config adds its libc++ and an implicit RPATH,
+        # so cleaning LDFLAGS alone cannot produce a standalone macOS SDK.
+        def xcrun(*arguments: str) -> str:
+            return subprocess.check_output(
+                ['/usr/bin/xcrun', '--sdk', 'macosx', *arguments], text=True).strip()
+        for variable, tool in (('CC', 'clang'), ('CXX', 'clang++'),
+                               ('AR', 'ar'), ('RANLIB', 'ranlib')):
+            environment[variable] = xcrun('--find', tool)
+        environment['SDKROOT'] = xcrun('--show-sdk-path')
+        environment['MACOSX_DEPLOYMENT_TARGET'] = '14.0'
+        for variable in ('CFLAGS', 'CXXFLAGS', 'CPPFLAGS', 'LDFLAGS'):
+            environment[variable] = ''
+        for variable in ('CPATH', 'C_INCLUDE_PATH', 'CPLUS_INCLUDE_PATH',
+                         'OBJC_INCLUDE_PATH', 'LIBRARY_PATH', 'COMPILER_PATH',
+                         'GCC_EXEC_PREFIX', 'CMAKE_TOOLCHAIN_FILE'):
+            environment.pop(variable, None)
+        return environment
     # These variables select Visual Studio's architecture/toolset, not Ninja's.
     if os.name == 'nt':
         environment.pop('CMAKE_GENERATOR_PLATFORM', None)
@@ -69,6 +88,24 @@ def release_environment(environment: dict[str, str], build: Path, preset: str) -
     return environment
 
 
+def cmake_arguments(preset: str, environment: dict[str, str]) -> list[str]:
+    arguments = ['cmake', '--preset', preset]
+    if os.name != 'nt':
+        # Explicit cache values also replace contaminated flags on reconfigure.
+        for kind in ('EXE', 'SHARED', 'MODULE'):
+            arguments.append(f'-DCMAKE_{kind}_LINKER_FLAGS={environment["LDFLAGS"]}')
+    if preset.startswith('macos-'):
+        for language, variable in (('C', 'CC'), ('CXX', 'CXX')):
+            arguments += [f'-DCMAKE_{language}_COMPILER={environment[variable]}',
+                          f'-DCMAKE_{language}_FLAGS=']
+        arguments += [f'-DCMAKE_AR={environment["AR"]}',
+                      f'-DCMAKE_RANLIB={environment["RANLIB"]}',
+                      f'-DCMAKE_OSX_SYSROOT={environment["SDKROOT"]}',
+                      '-DCMAKE_OSX_ARCHITECTURES=arm64',
+                      '-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0', '-DCMAKE_TOOLCHAIN_FILE=']
+    return arguments
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--preset', default=os.environ.get('CMAKE_BUILD_DIR'))
@@ -77,11 +114,7 @@ def main() -> None:
     if not preset:
         parser.error('Run through Pixi or specify --preset')
     environment = release_environment(os.environ.copy(), ROOT / 'build' / preset, preset)
-    arguments = ['cmake', '--preset', preset]
-    if os.name != 'nt':
-        # Explicit cache values also replace contaminated flags on reconfigure.
-        for kind in ('EXE', 'SHARED', 'MODULE'):
-            arguments.append(f'-DCMAKE_{kind}_LINKER_FLAGS={environment["LDFLAGS"]}')
+    arguments = cmake_arguments(preset, environment)
     subprocess.run([*arguments, *extra], env=environment, cwd=ROOT, check=True)
 
 

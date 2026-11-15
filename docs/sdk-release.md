@@ -18,9 +18,9 @@ Download the platform SDK for the desired version from [GitHub Releases](https:/
 | macOS ARM64 | `phono-core-sdk-X.Y.Z-macos-arm64.tar.gz` |
 | Android ARM64 | `phono-core-sdk-X.Y.Z-android-armv8.tar.gz` |
 
-SDK 包含 `include/phono-core/phono_api.h`、Linux 的 `lib/libphono_core.so` 或 Windows 的 `bin/phono_core.dll` 和 `lib/phono_core.lib`、`lib/cmake/phono-core`、`share/licenses/phono-core`、`share/phono-core/VERSION` 及 Linux 的 `build-info.json`。安装后的 C API 可以由纯 C 工程链接，不要求消费者安装 ExecuTorch、Python 或 core 源码。
+SDK 包含 `include/phono-core/phono_api.h`、Linux 的 `lib/libphono_core.so` 或 Windows 的 `bin/phono_core.dll` 和 `lib/phono_core.lib`、`lib/cmake/phono-core`、`share/licenses/phono-core`、`share/phono-core/VERSION` 及 Linux / macOS 的 `build-info.json`。安装后的 C API 可以由纯 C 工程链接，不要求消费者安装 ExecuTorch、Python 或 core 源码。
 
-The SDK contains `include/phono-core/phono_api.h`, Linux `lib/libphono_core.so` or Windows `bin/phono_core.dll` and `lib/phono_core.lib`, `lib/cmake/phono-core`, `share/licenses/phono-core`, `share/phono-core/VERSION`, and Linux `build-info.json`. A C-only project can link the installed C API without installing ExecuTorch, Python, or core sources.
+The SDK contains `include/phono-core/phono_api.h`, Linux `lib/libphono_core.so` or Windows `bin/phono_core.dll` and `lib/phono_core.lib`, `lib/cmake/phono-core`, `share/licenses/phono-core`, `share/phono-core/VERSION`, and Linux / macOS `build-info.json`. A C-only project can link the installed C API without installing ExecuTorch, Python, or core sources.
 
 ```cmake
 find_package(phono-core 0.1.2 CONFIG REQUIRED)
@@ -45,9 +45,9 @@ The current model format is `2.2`. Release verification covers two snapshots: [W
 
 One universal runtime supports both quantized models; no precision-specific runtimes are published. `justfile` pins the ExecuTorch commit and required submodules, while the committed `pixi.lock` pins Python and all platform build environments. The runtime contains XNNPACK, the operator union from `ops_config`, and `phono::update_mhsa_kv.out`, with dtype pruning disabled. Models requiring additional operators need an updated core manifest and a rebuilt, verified runtime.
 
-Windows x64 使用静态 MSVC CRT。macOS ARM64 构建环境要求 macOS 14 或更高版本；Android ARM64 使用 NDK 交叉编译，目标为 API 26、`arm64-v8a` 和 `c++_shared`。Linux x86_64 与 ARM64 分别使用对应的 Pixi 构建环境。
+Windows x64 使用静态 MSVC CRT。macOS ARM64 使用 Xcode Apple Clang、系统 libc++ 和 macOS 14.0 部署目标，不要求用户安装 Conda 运行库；Android ARM64 使用 NDK 交叉编译，目标为 API 26、`arm64-v8a` 和 `c++_shared`。Linux x86_64 与 ARM64 分别使用对应的 Pixi 构建环境。
 
-Windows x64 uses the static MSVC CRT. The macOS ARM64 build environment requires macOS 14 or later. Android ARM64 is cross-compiled with the NDK for API 26, `arm64-v8a`, and `c++_shared`. Linux x86_64 and ARM64 use their respective Pixi build environments.
+Windows x64 uses the static MSVC CRT. macOS ARM64 uses Xcode Apple Clang, system libc++, and a macOS 14.0 deployment target, with no Conda runtime required. Android ARM64 is cross-compiled with the NDK for API 26, `arm64-v8a`, and `c++_shared`. Linux x86_64 and ARM64 use their respective Pixi build environments.
 
 ## 模型包布局 / Model package layout
 
@@ -72,9 +72,9 @@ Special symbols such as `bos_token`, declared in `config.json`, are appended to 
 
 ## 构建与验证 / Build and verify
 
-所有平台使用同一个 Pixi 入口和对应的原生 CMake preset。Linux x86_64 / ARM64 锁定 GCC 13.3.0 与 glibc 2.28 sysroot；macOS / Windows 保留各自工具链。Linux 配置脚本检查工具链版本，清理 Conda 的 `LDFLAGS`，并以构建目录中的独立 GCC specs 去除工具链隐式 RPATH，不修改已安装的编译器。
+所有平台使用同一个 Pixi 入口和对应的原生 CMake preset。Linux x86_64 / ARM64 锁定 GCC 13.3.0 与 glibc 2.28 sysroot；macOS 使用所选 Xcode 的工具链，Windows 使用 MSVC。Linux 配置脚本检查工具链版本，清理 Conda 的 `LDFLAGS`，并以构建目录中的独立 GCC specs 去除工具链隐式 RPATH，不修改已安装的编译器。
 
-All platforms use the same Pixi entry points and their native CMake presets. Linux x86_64 / ARM64 pin GCC 13.3.0 and a glibc 2.28 sysroot; macOS / Windows retain their platform toolchains. Linux configuration checks the toolchain version, cleans Conda's `LDFLAGS`, and uses a separate GCC specs file in the build directory to suppress implicit toolchain RPATHs without modifying the installed compiler.
+All platforms use the same Pixi entry points and their native CMake presets. Linux x86_64 / ARM64 pin GCC 13.3.0 and a glibc 2.28 sysroot; macOS uses the selected Xcode toolchain and Windows uses MSVC. Linux configuration checks the toolchain version, cleans Conda's `LDFLAGS`, and uses a separate GCC specs file in the build directory to suppress implicit toolchain RPATHs without modifying the installed compiler.
 
 ```sh
 pixi install --locked
@@ -89,6 +89,10 @@ pixi run --locked python tools/package_sdk.py
 模型可用时，将 `PHONO_TEST_MODEL_DIR` 设为模型包绝对路径后运行同一个 `pixi run --locked test`。Linux 打包前检查实际安装共享库：只导出 C ABI、无 RPATH / RUNPATH，GLIBC ≤ 2.28、GLIBCXX ≤ 3.4.32、CXXABI ≤ 1.3.14。检查失败即停止打包；结果和编译器版本写入 SDK 的 `share/phono-core/build-info.json`。
 
 With a model available, set `PHONO_TEST_MODEL_DIR` to its absolute package path and run the same `pixi run --locked test`. Before Linux packaging, the installed shared library must export only the C ABI, contain no RPATH / RUNPATH, and require GLIBC ≤ 2.28, GLIBCXX ≤ 3.4.32 and CXXABI ≤ 1.3.14. A failed check stops packaging; the report and compiler version are recorded in the SDK's `share/phono-core/build-info.json`.
+
+macOS 配置通过 `xcrun` 显式选择 Apple Clang、SDK 和归档工具，清空 Conda 的编译、头文件与库搜索参数。仅删除 `LDFLAGS` 中的 RPATH 不足以隔离 Conda Clang 的默认配置。dylib 的安装名固定为 `@rpath/libphono_core.dylib`；消费者自行提供运行库搜索路径，core 不嵌入 RPATH。打包前检查 ARM64 架构、部署目标、仅 C ABI 导出和系统库依赖，并移动 SDK 后以纯 C CMake 消费者实际链接、运行；此检查不使用 `DYLD_*` 覆盖。报告写入 `build-info.json`，失败停止发布。
+
+macOS configuration uses `xcrun` to explicitly select Apple Clang, the SDK, and archive tools, clearing Conda compile flags and header/library searches. Removing RPATH from `LDFLAGS` alone does not isolate Conda Clang's default configuration. The dylib install name is `@rpath/libphono_core.dylib`; consumers supply their loader search path, while core embeds no RPATH. Packaging checks ARM64 architecture, the deployment target, C-only exports, and system-library imports, then relocates the SDK and links/runs a pure C CMake consumer without `DYLD_*` overrides. Results are recorded in `build-info.json`; failures stop publication.
 
 Android 配置只使用 NDK 的目标编译与链接参数，不继承 Linux Conda 的头文件、库搜索路径或 RPATH；CI 将 `setup-ndk` 的安装输出显式传给 `ANDROID_NDK_ROOT`，关闭会将相对软链接改为旧 runner 绝对路径的可选 `local-cache`。配置前检查 `clang` / `clang++` 是否实际存在且可执行。Linux 的 GLIBCXX 上限按 GCC 13.2 起的符号版本确定，仍严格检查实际 ELF 需求。
 

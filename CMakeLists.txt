@@ -375,7 +375,24 @@ set_target_properties(phono_core_shared PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${PHONO_RUNTIME_OUTPUT_DIR}"
     ARCHIVE_OUTPUT_DIRECTORY "${PHONO_RUNTIME_OUTPUT_DIR}")
 add_library(phono::core ALIAS phono_core_shared)
-if(UNIX AND NOT APPLE)
+if(APPLE)
+  # Keep the installed C ABI relocatable without embedding a developer path.
+  set_target_properties(phono_core_shared PROPERTIES
+    MACOSX_RPATH YES INSTALL_NAME_DIR "@rpath" BUILD_WITH_INSTALL_NAME_DIR YES)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/interface/phono_api.h")
+  file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/interface/phono_api.h" _phono_api_lines
+    REGEX "^PHONO_API .*phono_[a-z_]+\\(")
+  set(_phono_macho_exports "")
+  foreach(_phono_api_line IN LISTS _phono_api_lines)
+    string(REGEX MATCH "phono_[a-z_]+\\(" _phono_api_name "${_phono_api_line}")
+    string(REGEX REPLACE "\\($" "" _phono_api_name "${_phono_api_name}")
+    string(APPEND _phono_macho_exports "_${_phono_api_name}\n")
+  endforeach()
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/phono-core.exports" "${_phono_macho_exports}")
+  target_link_options(phono_core_shared PRIVATE
+    "LINKER:-exported_symbols_list,${CMAKE_CURRENT_BINARY_DIR}/phono-core.exports")
+elseif(UNIX)
   target_link_options(phono_core_shared PRIVATE
     "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cmake/phono-core.exports"
     "LINKER:--exclude-libs,ALL")
@@ -445,7 +462,9 @@ target_include_directories(ime_demo_capi PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(ime_demo_capi PRIVATE phono_core_shared nlohmann_json::nlohmann_json)
 set_target_properties(ime_demo_capi PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${PHONO_RUNTIME_OUTPUT_DIR}")
-if(UNIX)
+if(APPLE)
+  set_target_properties(cli_demo_capi ime_demo_capi PROPERTIES INSTALL_RPATH "@loader_path/../lib")
+elseif(UNIX)
   set_target_properties(cli_demo_capi ime_demo_capi PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
 endif()
 install(TARGETS cli_demo_capi ime_demo_capi
@@ -454,7 +473,7 @@ install(FILES core_configs/engine_config.json core_configs/context_manager.json
   DESTINATION ${CMAKE_INSTALL_DATADIR}/phono-core/core_configs COMPONENT demos)
 
 if(BUILD_TESTING)
-  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
+  if(UNIX AND NOT CMAKE_CROSSCOMPILING)
     add_test(NAME phono_release_tests COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/release_tests.py")
     set_tests_properties(phono_release_tests PROPERTIES LABELS unit TIMEOUT 30)

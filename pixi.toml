@@ -37,9 +37,7 @@ gxx_linux-aarch64 = "=13.3.0"
 sysroot_linux-aarch64 = "2.28.*"
 [target.osx-arm64-14.activation.env]
 CMAKE_BUILD_DIR = "macos-arm64"
-[target.osx-arm64-14.dependencies]
-c-compiler = "*"
-cxx-compiler = "*"
+# macOS uses Xcode Apple Clang and the system libc++; Pixi supplies build tools.
 [target.win-64.activation.env]
 CMAKE_BUILD_DIR = "windows-x64"
 [target.win-64.dependencies]

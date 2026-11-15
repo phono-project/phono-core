@@ -50,6 +50,8 @@ jobs:
       - name: prepare third_party
         if: steps.third_party_cache.outputs.cache-hit != 'true'
         run: pixi run setup
+      # macOS configuration selects Xcode Apple Clang and system libc++,
+      # while Pixi remains responsible for Python and build tools.
       - name: configure
         run: pixi run --locked config
       - name: build
@@ -91,6 +93,7 @@ jobs:
           pixi run --locked python tools/configure.py --preset "$PRESET"
           pixi run --locked cmake --build --preset "$PRESET"
           pixi run --locked cmake --build --preset "$PRESET" --target install
+      # Packaging audits actual ELF / Mach-O imports and relocation.
       - name: package
         run: |
           pixi run --locked python tools/package_sdk.py
