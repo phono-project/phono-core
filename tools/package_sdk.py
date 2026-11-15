@@ -12,6 +12,9 @@ from check_elf import inspect
 from release_version import version
 
 ROOT = Path(__file__).resolve().parents[1]
+# GCC 13.2 introduced GLIBCXX_3.4.32; the pinned 13.3 toolchains can use it.
+# https://gcc.gnu.org/onlinedocs/libstdc++/manual/abi.html
+LINUX_ABI_LIMITS = dict(max_glibc='2.28', max_glibcxx='3.4.32', max_cxxabi='1.3.14')
 
 
 def verify_linux(prefix: Path) -> dict:
@@ -25,8 +28,7 @@ def verify_linux(prefix: Path) -> dict:
     if values.get('PHONO_DTYPE_SELECTIVE_BUILD') != 'OFF':
         raise ValueError(f'Release kernels must disable dtype pruning: {cache}')
     library = prefix / 'lib/libphono_core.so'
-    report = inspect(library, max_glibc='2.28', max_glibcxx='3.4.31', max_cxxabi='1.3.14',
-                     no_rpath=True, c_api_only=True)
+    report = inspect(library, **LINUX_ABI_LIMITS, no_rpath=True, c_api_only=True)
     compiler = subprocess.check_output([values['CMAKE_CXX_COMPILER'], '-dumpfullversion'], text=True).strip()
     if compiler != '13.3.0':
         raise ValueError(f'Expected locked GCC 13.3.0, found {compiler}')

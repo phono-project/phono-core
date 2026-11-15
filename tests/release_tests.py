@@ -10,16 +10,41 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 from configure import release_environment
 from check_elf import inspect
+from package_sdk import LINUX_ABI_LIMITS
 
 
 @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux ELF toolchain regression')
 class ReleaseLink(unittest.TestCase):
+    def test_android_ignores_host_flags_and_uses_the_selected_ndk(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temporary:
+            root = Path(temporary)
+            ndk = root / 'ndk'
+            toolchain = ndk / 'build/cmake/android.toolchain.cmake'
+            toolchain.parent.mkdir(parents=True)
+            toolchain.touch()
+            for arch in ('nocona', 'armv8-a'):
+                host = {**os.environ, 'ANDROID_NDK_ROOT': str(ndk),
+                        'ANDROID_NDK_HOME': '/wrong/preinstalled/ndk',
+                        'CFLAGS': f'-march={arch} -isystem /host/include',
+                        'CXXFLAGS': f'-march={arch} -isystem /host/include',
+                        'CPPFLAGS': '-isystem /host/include',
+                        'LDFLAGS': '-L/host/lib -Wl,-rpath,/host/lib'}
+                target = release_environment(host, root / 'build', 'android-armv8')
+                self.assertEqual(target['ANDROID_NDK_HOME'], str(ndk))
+                self.assertEqual(target['CXX'], host['CXX'])
+                self.assertFalse(any(target[key] for key in ('CFLAGS', 'CXXFLAGS', 'CPPFLAGS', 'LDFLAGS')))
+                self.assertEqual(host['LDFLAGS'], '-L/host/lib -Wl,-rpath,/host/lib')
+
     def test_injected_rpaths_are_rejected_and_removed(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temporary:
             root = Path(temporary)
             source = root / 'source'
             source.mkdir()
-            (source / 'probe.cpp').write_text('extern "C" int phono_engine_create() { return 0; }\n')
+            # This GCC 13.2 symbol reproduces the ARM64 runtime requirement on
+            # any Linux host, while also exercising the existing RPATH guard.
+            (source / 'probe.cpp').write_text(
+                'namespace std { void ios_base_library_init(); }\n'
+                'extern "C" int phono_engine_create() { std::ios_base_library_init(); return 0; }\n')
             (source / 'CMakeLists.txt').write_text(
                 'cmake_minimum_required(VERSION 3.24)\nproject(probe LANGUAGES CXX)\n'
                 'add_library(probe SHARED probe.cpp)\n'
@@ -40,8 +65,11 @@ class ReleaseLink(unittest.TestCase):
                             f'-DCMAKE_INSTALL_PREFIX={root / "installed"}'], env=environment, check=True)
             subprocess.run(['cmake', '--build', root / 'build'], env=environment, check=True)
             subprocess.run(['cmake', '--install', root / 'build'], env=environment, check=True)
-            inspect(root / 'installed/lib/libprobe.so', max_glibc='2.28', max_glibcxx='3.4.31',
-                    max_cxxabi='1.3.14', no_rpath=True, c_api_only=True)
+            library = root / 'installed/lib/libprobe.so'
+            report = inspect(library, **LINUX_ABI_LIMITS, no_rpath=True, c_api_only=True)
+            self.assertEqual(report['required_abi']['GLIBCXX'], '3.4.32')
+            with self.assertRaisesRegex(ValueError, 'above allowed GLIBCXX_3.4.31'):
+                inspect(library, max_glibcxx='3.4.31')
 
 
 if __name__ == '__main__':

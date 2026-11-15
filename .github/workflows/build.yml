@@ -74,6 +74,7 @@ jobs:
           export PHONO_TEST_MODEL_DIR=cache/models/w8a8/
           pixi run --locked test
       - uses: nttld/setup-ndk@v1
+        id: ndk
         # only works with linux 64, win 64, mac arm
         if: matrix.target == 'linux-64'
         with:
@@ -83,10 +84,11 @@ jobs:
         if: matrix.target == 'linux-64'
         env:
           PRESET: android-armv8
+          ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
         run: |
           pixi run --locked python tools/configure.py --preset "$PRESET"
-          pixi run cmake --build --preset $PRESET
-          pixi run cmake --build --preset $PRESET --target install
+          pixi run --locked cmake --build --preset "$PRESET"
+          pixi run --locked cmake --build --preset "$PRESET" --target install
       - name: package
         run: |
           pixi run --locked python tools/package_sdk.py

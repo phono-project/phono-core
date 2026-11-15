@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Configure native presets without leaking Conda's development RPATH into releases."""
+"""Configure platform presets without leaking Conda's development RPATH into releases."""
 from __future__ import annotations
 
 import argparse
@@ -14,6 +14,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def release_environment(environment: dict[str, str], build: Path, preset: str) -> dict[str, str]:
     environment = environment.copy()
+    if preset.startswith('android-'):
+        ndk = Path(environment.get('ANDROID_NDK_ROOT') or
+                   environment.get('ANDROID_NDK_HOME', '')).resolve()
+        if not (ndk / 'build/cmake/android.toolchain.cmake').is_file():
+            raise ValueError('Set ANDROID_NDK_ROOT to the installed Android NDK')
+        environment['ANDROID_NDK_ROOT'] = str(ndk)
+        environment['ANDROID_NDK_HOME'] = str(ndk)
+        # The NDK owns target flags and library searches. In particular, a host
+        # -L<conda>/lib makes Android's -latomic select the Linux libatomic.so.
+        # Keep CC/CXX available to ExecuTorch's separate host-tool sub-builds.
+        for variable in ('CFLAGS', 'CXXFLAGS', 'CPPFLAGS', 'LDFLAGS'):
+            environment[variable] = ''
+        return environment
     # These variables select Visual Studio's architecture/toolset, not Ninja's.
     if os.name == 'nt':
         environment.pop('CMAKE_GENERATOR_PLATFORM', None)
